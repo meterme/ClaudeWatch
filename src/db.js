@@ -141,11 +141,9 @@ function migrate(db) {
     )
   `);
 
-  // Drop old columns if upgrading from previous schema (ignore errors)
-  try { db.run(`ALTER TABLE plan_config DROP COLUMN plan_name`); } catch (_) {}
-  try { db.run(`ALTER TABLE plan_config DROP COLUMN seat_type`); } catch (_) {}
-  try { db.run(`ALTER TABLE plan_config DROP COLUMN seat_count`); } catch (_) {}
-  try { db.run(`ALTER TABLE plan_config DROP COLUMN monthly_seat_cost_usd`); } catch (_) {}
+  // Add new columns if upgrading from previous schema (ignore errors if already exist)
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN standard_seat_cost_usd REAL NOT NULL DEFAULT 20.0`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN premium_seat_cost_usd REAL NOT NULL DEFAULT 100.0`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS org_members (
