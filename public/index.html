@@ -752,8 +752,8 @@
       const el = document.getElementById('planOverview');
       if (!overage || !overage.configured) {
         el.innerHTML = `<div class="plan-unconfigured">
-          <span>Configure your plan to track overage and session costs</span>
-          <button onclick="openSettings()">Configure Plan</button>
+          <span>Import your team members CSV to track per-user overage and session costs</span>
+          <button onclick="openSettings()">Import Members CSV</button>
         </div>`;
         return;
       }

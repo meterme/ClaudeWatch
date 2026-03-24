@@ -395,11 +395,17 @@ router.get("/stats/session-windows", async (req, res) => {
 // ── Monthly overage ─────────────────────────────────────────────────────────
 router.get("/stats/overage", async (req, res) => {
   const db = await getDb();
-  const configRows = query(db, "SELECT * FROM plan_config LIMIT 1");
-  if (configRows.length === 0) {
+  const memberCount = scalar(db, "SELECT COUNT(*) AS v FROM org_members");
+  if (memberCount === 0) {
     return res.json({ configured: false });
   }
-  const config = configRows[0];
+  const configRows = query(db, "SELECT * FROM plan_config LIMIT 1");
+  // Use saved config or fall back to defaults
+  const config = configRows[0] || {
+    billing_cycle_day: 1,
+    standard_seat_cost_usd: 20,
+    premium_seat_cost_usd: 100,
+  };
   const period = getBillingPeriod(config.billing_cycle_day);
 
   // Per-user cost joined with seat tier
