@@ -351,6 +351,160 @@
 
     .no-content { color: var(--text-dim); font-style: italic; }
 
+    /* ── Plan overview panel ──────────────────────────────────── */
+    .plan-overview {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .plan-kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .plan-kpi .label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .plan-kpi .value {
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .plan-kpi .sub {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .plan-unconfigured {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .plan-unconfigured span { color: var(--text-dim); font-size: 13px; }
+
+    .plan-unconfigured button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    /* ── Settings modal ──────────────────────────────────────── */
+    #settingsModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      overflow-y: auto;
+    }
+
+    #settingsModal.open { display: flex; justify-content: center; padding: 40px 20px; }
+
+    .settings-form {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 480px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+
+    .settings-form .modal-header { border-radius: 12px 12px 0 0; }
+
+    .settings-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .settings-body label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .settings-body input, .settings-body select {
+      display: block;
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .settings-body input:focus, .settings-body select:focus { border-color: var(--accent); }
+
+    .settings-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .settings-body .btn-primary {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      width: 100%;
+    }
+    .settings-body .btn-primary:hover { background: var(--accent2); }
+
+    .settings-body .status-msg {
+      font-size: 13px;
+      color: var(--green);
+      text-align: center;
+      min-height: 20px;
+    }
+
+    /* ── Gear button ─────────────────────────────────────────── */
+    .gear-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .gear-btn:hover { background: var(--surface2); color: var(--text); }
+
     @media (max-width: 800px) {
       .charts { grid-template-columns: 1fr; }
       .chart-panel.wide { grid-column: 1; }
@@ -371,12 +525,16 @@
       <label>User</label>
       <select id="filterUser"><option value="">All</option></select>
       <button onclick="refresh()">Apply</button>
+      <button class="gear-btn" onclick="openSettings()" title="Plan settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
       <button id="logoutBtn" style="display:none;background:var(--surface2);border:1px solid var(--border)" onclick="logout()">Logout</button>
     </div>
   </header>
 
   <main>
     <div class="kpi-grid" id="kpis"></div>
+    <div id="planOverview"></div>
 
     <div class="charts">
       <div class="chart-panel wide">
@@ -404,6 +562,7 @@
           <tr>
             <th>User</th><th>Requests</th><th>Sessions</th>
             <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th>
+            <th>Windows</th><th>Avg/Window</th><th>Velocity</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -444,6 +603,49 @@
         <div class="conversation-body" id="conversationBody"></div>
       </div>
     </div>
+    <div id="settingsModal">
+      <div class="settings-form">
+        <div class="modal-header">
+          <h2>Plan Settings</h2>
+          <button class="modal-close" onclick="closeSettings()">&times;</button>
+        </div>
+        <div class="settings-body">
+          <div>
+            <label>Plan Name</label>
+            <input type="text" id="setPlanName" value="Team" placeholder="Team">
+          </div>
+          <div class="settings-row">
+            <div>
+              <label>Seat Type</label>
+              <select id="setSeatType">
+                <option value="standard">Standard ($20/mo)</option>
+                <option value="premium">Premium ($100/mo)</option>
+              </select>
+            </div>
+            <div>
+              <label>Seat Count</label>
+              <input type="number" id="setSeatCount" value="1" min="1">
+            </div>
+          </div>
+          <div class="settings-row">
+            <div>
+              <label>Monthly Cost / Seat ($)</label>
+              <input type="number" id="setSeatCost" value="20" min="0" step="0.01">
+            </div>
+            <div>
+              <label>Billing Cycle Day (1-28)</label>
+              <input type="number" id="setBillingDay" value="1" min="1" max="28">
+            </div>
+          </div>
+          <div>
+            <label>Anthropic Admin API Key</label>
+            <input type="password" id="setAdminApiKey" placeholder="sk-ant-admin-...">
+          </div>
+          <div class="status-msg" id="settingsStatus"></div>
+          <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script>
@@ -482,7 +684,7 @@
 
     // ── Render ─────────────────────────────────────────────────────
     async function refresh() {
-      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users] =
+      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users, sessionWindows, overage] =
         await Promise.all([
           api('/stats/summary'),
           api('/stats/cost-over-time'),
@@ -493,6 +695,8 @@
           api('/sessions'),
           api('/events/recent'),
           api('/users'),
+          api('/stats/session-windows'),
+          api('/stats/overage'),
         ]);
 
       // Populate user filter
@@ -507,11 +711,12 @@
       });
 
       renderKPIs(summary);
-      renderCostTime(costTime);
+      renderPlanOverview(overage, sessionWindows);
+      renderCostTime(costTime, overage);
       renderModelChart(byModel);
       renderToolChart(tools);
       renderHeatmap(hourly);
-      renderUserTable(byUser);
+      renderUserTable(byUser, sessionWindows);
       renderSessionTable(sessions);
       renderEventTable(events);
     }
@@ -529,34 +734,91 @@
       `;
     }
 
-    function renderCostTime(data) {
+    function renderPlanOverview(overage, sessionWindows) {
+      const el = document.getElementById('planOverview');
+      if (!overage || !overage.configured) {
+        el.innerHTML = `<div class="plan-unconfigured">
+          <span>Configure your plan to track overage and session costs</span>
+          <button onclick="openSettings()">Configure Plan</button>
+        </div>`;
+        return;
+      }
+
+      const s = sessionWindows?.summary || {};
+      const overageColor = overage.overage > 0 ? 'var(--red)' : 'var(--green)';
+      const pct = overage.base_plan_cost > 0
+        ? Math.round((overage.total_cost / overage.base_plan_cost) * 100) : 0;
+      const projColor = overage.projected_end_of_period > overage.base_plan_cost
+        ? 'var(--orange)' : 'var(--text-dim)';
+
+      el.innerHTML = `<div class="plan-overview">
+        <div class="plan-kpi">
+          <div class="label">Monthly Overage</div>
+          <div class="value" style="color:${overageColor}">${fmtCost(overage.overage)}</div>
+          <div class="sub">Base: ${fmtCost(overage.base_plan_cost)} | Spend: ${fmtCost(overage.total_cost)} (${pct}%)</div>
+          <div class="sub">${overage.billing_period.daysRemaining}d remaining</div>
+        </div>
+        <div class="plan-kpi">
+          <div class="label">Avg Session Cost</div>
+          <div class="value" style="color:var(--cyan)">${s.avg_cost_per_window != null ? fmtCost(s.avg_cost_per_window) : '—'}</div>
+          <div class="sub">${fmt(s.total_windows)} windows detected | ${fmt(s.avg_requests_per_window)} req/window</div>
+        </div>
+        <div class="plan-kpi">
+          <div class="label">Usage Velocity</div>
+          <div class="value" style="color:var(--accent2)">${s.avg_cost_per_active_hour != null ? fmtCost(s.avg_cost_per_active_hour) + '/hr' : '—'}</div>
+          <div class="sub">${fmt(s.avg_tokens_per_window)} tokens/window | ${s.avg_duration_hours ?? 0}h avg</div>
+        </div>
+        <div class="plan-kpi">
+          <div class="label">Projected End of Period</div>
+          <div class="value" style="color:${projColor}">${fmtCost(overage.projected_end_of_period)}</div>
+          <div class="sub">${overage.by_user?.length || 0} active users | ${overage.billing_period.daysElapsed}d elapsed</div>
+        </div>
+      </div>`;
+    }
+
+    function renderCostTime(data, overage) {
       destroyChart('costTime');
+      const datasets = [
+        {
+          label: 'Cost ($)',
+          data: data.map(d => d.cost),
+          backgroundColor: '#6366f1aa',
+          borderRadius: 4,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          label: 'Requests',
+          data: data.map(d => d.requests),
+          type: 'line',
+          borderColor: '#06b6d4',
+          backgroundColor: '#06b6d433',
+          fill: true,
+          tension: 0.3,
+          yAxisID: 'y1',
+          order: 1,
+        },
+      ];
+
+      // Add daily budget line if plan is configured
+      if (overage && overage.configured && overage.base_plan_cost > 0) {
+        const dailyBudget = overage.base_plan_cost / overage.billing_period.totalDays;
+        datasets.push({
+          label: 'Daily Budget',
+          data: data.map(() => dailyBudget),
+          type: 'line',
+          borderColor: '#f59e0b',
+          borderDash: [6, 4],
+          borderWidth: 2,
+          pointRadius: 0,
+          yAxisID: 'y',
+          order: 0,
+        });
+      }
+
       charts.costTime = new Chart(document.getElementById('chartCostTime'), {
         type: 'bar',
-        data: {
-          labels: data.map(d => d.day),
-          datasets: [
-            {
-              label: 'Cost ($)',
-              data: data.map(d => d.cost),
-              backgroundColor: '#6366f1aa',
-              borderRadius: 4,
-              yAxisID: 'y',
-              order: 2,
-            },
-            {
-              label: 'Requests',
-              data: data.map(d => d.requests),
-              type: 'line',
-              borderColor: '#06b6d4',
-              backgroundColor: '#06b6d433',
-              fill: true,
-              tension: 0.3,
-              yAxisID: 'y1',
-              order: 1,
-            },
-          ],
-        },
+        data: { labels: data.map(d => d.day), datasets },
         options: {
           responsive: true,
           interaction: { mode: 'index', intersect: false },
@@ -664,18 +926,39 @@
       });
     }
 
-    function renderUserTable(data) {
+    function renderUserTable(data, sessionWindows) {
+      // Build per-user window stats from session window data
+      const userWindowStats = {};
+      if (sessionWindows?.windows) {
+        for (const w of sessionWindows.windows) {
+          if (!userWindowStats[w.user_email]) {
+            userWindowStats[w.user_email] = { count: 0, totalCost: 0, totalHours: 0 };
+          }
+          const s = userWindowStats[w.user_email];
+          s.count++;
+          s.totalCost += w.total_cost || 0;
+          s.totalHours += w.duration_hours || 0;
+        }
+      }
+
       const tbody = document.querySelector('#userTable tbody');
-      tbody.innerHTML = data.map(u => `
-        <tr>
+      tbody.innerHTML = data.map(u => {
+        const ws = userWindowStats[u.user_email];
+        const windows = ws ? ws.count : 0;
+        const avgPerWindow = ws && ws.count > 0 ? ws.totalCost / ws.count : null;
+        const velocity = ws && ws.totalHours > 0 ? ws.totalCost / ws.totalHours : null;
+        return `<tr>
           <td>${u.user_email || '—'}</td>
           <td>${fmt(u.requests)}</td>
           <td>${fmt(u.sessions)}</td>
           <td>${fmt(u.input_tokens)}</td>
           <td>${fmt(u.output_tokens)}</td>
           <td style="color:var(--green)">${fmtCost(u.cost)}</td>
-        </tr>
-      `).join('');
+          <td>${windows}</td>
+          <td>${avgPerWindow != null ? fmtCost(avgPerWindow) : '—'}</td>
+          <td>${velocity != null ? fmtCost(velocity) + '/hr' : '—'}</td>
+        </tr>`;
+      }).join('');
     }
 
     function renderEventTable(data) {
@@ -784,6 +1067,70 @@
       d.textContent = s;
       return d.innerHTML;
     }
+
+    // ── Settings modal ──────────────────────────────────────────────
+    async function openSettings() {
+      const modal = document.getElementById('settingsModal');
+      modal.classList.add('open');
+      document.getElementById('settingsStatus').textContent = '';
+
+      // Load current config
+      try {
+        const data = await api('/plan-config');
+        if (data?.plan) {
+          document.getElementById('setPlanName').value = data.plan.plan_name || 'Team';
+          document.getElementById('setSeatType').value = data.plan.seat_type || 'standard';
+          document.getElementById('setSeatCount').value = data.plan.seat_count || 1;
+          document.getElementById('setSeatCost').value = data.plan.monthly_seat_cost_usd || 20;
+          document.getElementById('setBillingDay').value = data.plan.billing_cycle_day || 1;
+        }
+        // Don't populate the API key field (it's secret)
+        document.getElementById('setAdminApiKey').value = '';
+        document.getElementById('setAdminApiKey').placeholder =
+          data?.hasAdminApiKey ? 'sk-ant-admin-••••••• (configured)' : 'sk-ant-admin-...';
+      } catch (_) {}
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsModal').classList.remove('open');
+    }
+
+    document.getElementById('settingsModal').addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeSettings();
+    });
+
+    async function saveSettings() {
+      const body = {
+        plan_name: document.getElementById('setPlanName').value,
+        seat_type: document.getElementById('setSeatType').value,
+        seat_count: parseInt(document.getElementById('setSeatCount').value) || 1,
+        monthly_seat_cost_usd: parseFloat(document.getElementById('setSeatCost').value) || 20,
+        billing_cycle_day: parseInt(document.getElementById('setBillingDay').value) || 1,
+      };
+      const apiKey = document.getElementById('setAdminApiKey').value.trim();
+      if (apiKey) body.admin_api_key = apiKey;
+
+      const statusEl = document.getElementById('settingsStatus');
+      try {
+        const res = await fetch('/api/plan-config' + qs(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = 'Settings saved!';
+        setTimeout(() => { closeSettings(); refresh(); }, 800);
+      } catch (err) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = 'Error saving settings';
+      }
+    }
+
+    // Update seat cost when seat type changes
+    document.getElementById('setSeatType').addEventListener('change', e => {
+      document.getElementById('setSeatCost').value = e.target.value === 'premium' ? 100 : 20;
+    });
 
     // ── Init ───────────────────────────────────────────────────────
     // Default date range: last 30 days

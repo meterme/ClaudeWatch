@@ -130,12 +130,26 @@ function migrate(db) {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS plan_config (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_name             TEXT NOT NULL DEFAULT 'Team',
+      seat_type             TEXT NOT NULL DEFAULT 'standard',
+      seat_count            INTEGER NOT NULL DEFAULT 1,
+      monthly_seat_cost_usd REAL NOT NULL DEFAULT 20.0,
+      billing_cycle_day     INTEGER NOT NULL DEFAULT 1,
+      created_at            TEXT NOT NULL,
+      updated_at            TEXT NOT NULL
+    )
+  `);
+
   // Indexes for common query patterns
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_ts ON api_requests(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user ON api_requests(user_email)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_model ON api_requests(model)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_tool_uses_ts ON tool_uses(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_prompts_ts ON user_prompts(timestamp)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user_ts ON api_requests(user_email, timestamp)`);
 
   persist();
 }

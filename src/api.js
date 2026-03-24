@@ -1,5 +1,11 @@
 const express = require("express");
-const { getDb } = require("./db");
+const { getDb, persist } = require("./db");
+const {
+  getAdminApiKey,
+  setAdminApiKey,
+  fetchCostReport,
+  fetchUsageReport,
+} = require("./admin-api");
 
 const router = express.Router();
 
@@ -254,6 +260,167 @@ router.get("/users", async (req, res) => {
   res.json(rows.map(r => r.user_email));
 });
 
+// ── Plan config CRUD ────────────────────────────────────────────────────────
+router.get("/plan-config", async (req, res) => {
+  const db = await getDb();
+  const rows = query(db, "SELECT * FROM plan_config LIMIT 1");
+  const apiKey = await getAdminApiKey();
+  res.json({
+    plan: rows[0] || null,
+    hasAdminApiKey: !!apiKey,
+  });
+});
+
+router.post("/plan-config", async (req, res) => {
+  const db = await getDb();
+  const {
+    plan_name = "Team",
+    seat_type = "standard",
+    seat_count = 1,
+    monthly_seat_cost_usd = 20,
+    billing_cycle_day = 1,
+    admin_api_key,
+  } = req.body || {};
+
+  const now = new Date().toISOString();
+  const existing = query(db, "SELECT id FROM plan_config LIMIT 1");
+
+  if (existing.length > 0) {
+    db.run(
+      `UPDATE plan_config SET plan_name=?, seat_type=?, seat_count=?,
+       monthly_seat_cost_usd=?, billing_cycle_day=?, updated_at=? WHERE id=?`,
+      [plan_name, seat_type, seat_count, monthly_seat_cost_usd,
+       Math.min(28, Math.max(1, billing_cycle_day)), now, existing[0].id]
+    );
+  } else {
+    db.run(
+      `INSERT INTO plan_config (plan_name, seat_type, seat_count,
+       monthly_seat_cost_usd, billing_cycle_day, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?)`,
+      [plan_name, seat_type, seat_count, monthly_seat_cost_usd,
+       Math.min(28, Math.max(1, billing_cycle_day)), now, now]
+    );
+  }
+
+  if (admin_api_key !== undefined) {
+    await setAdminApiKey(admin_api_key);
+  }
+
+  persist();
+  res.json({ ok: true });
+});
+
+// ── 5-hour session windows ──────────────────────────────────────────────────
+router.get("/stats/session-windows", async (req, res) => {
+  const db = await getDb();
+  const { from, to, user } = req.query;
+  const wc = whereClause(from, to, user);
+
+  const windows = query(db, `
+    WITH ordered AS (
+      SELECT timestamp, user_email, cost_usd, input_tokens, output_tokens,
+        ROUND((julianday(timestamp) - julianday(
+          LAG(timestamp) OVER (PARTITION BY user_email ORDER BY timestamp)
+        )) * 86400) AS gap_seconds
+      FROM api_requests ${wc.sql}
+    ),
+    windowed AS (
+      SELECT *,
+        SUM(CASE WHEN gap_seconds IS NULL OR gap_seconds > 18000 THEN 1 ELSE 0 END)
+          OVER (PARTITION BY user_email ORDER BY timestamp) AS window_id
+      FROM ordered
+    )
+    SELECT user_email, window_id,
+      MIN(timestamp) AS window_start, MAX(timestamp) AS window_end,
+      COUNT(*) AS request_count,
+      ROUND(SUM(cost_usd), 6) AS total_cost,
+      SUM(input_tokens) AS total_input_tokens,
+      SUM(output_tokens) AS total_output_tokens,
+      SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens,
+      ROUND((julianday(MAX(timestamp)) - julianday(MIN(timestamp))) * 24, 4) AS duration_hours
+    FROM windowed
+    GROUP BY user_email, window_id
+    ORDER BY window_start DESC
+  `, wc.params);
+
+  res.json(computeSessionWindowStats(windows));
+});
+
+// ── Monthly overage ─────────────────────────────────────────────────────────
+router.get("/stats/overage", async (req, res) => {
+  const db = await getDb();
+  const configRows = query(db, "SELECT * FROM plan_config LIMIT 1");
+  if (configRows.length === 0) {
+    return res.json({ configured: false });
+  }
+  const config = configRows[0];
+  const period = getBillingPeriod(config.billing_cycle_day);
+  const basePlanCost = config.seat_count * config.monthly_seat_cost_usd;
+
+  const totalCost = scalar(db,
+    `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests
+     WHERE timestamp >= ? AND timestamp < ?`,
+    [period.start, period.end]);
+
+  const byUser = query(db,
+    `SELECT user_email,
+            SUM(cost_usd) AS cost,
+            COUNT(*) AS requests,
+            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS tokens
+     FROM api_requests
+     WHERE timestamp >= ? AND timestamp < ?
+     GROUP BY user_email
+     ORDER BY cost DESC`,
+    [period.start, period.end]);
+
+  const overage = Math.max(0, totalCost - basePlanCost);
+  const projectedCost = period.daysElapsed > 0
+    ? (totalCost / period.daysElapsed) * period.totalDays
+    : 0;
+
+  res.json({
+    configured: true,
+    billing_period: period,
+    base_plan_cost: basePlanCost,
+    total_cost: totalCost,
+    overage,
+    projected_end_of_period: Math.round(projectedCost * 100) / 100,
+    by_user: byUser,
+  });
+});
+
+// ── Admin API proxies ───────────────────────────────────────────────────────
+router.get("/admin/cost-report", async (req, res) => {
+  const apiKey = await getAdminApiKey();
+  if (!apiKey) return res.status(400).json({ error: "Admin API key not configured" });
+
+  try {
+    const data = await fetchCostReport(apiKey, {
+      from: req.query.from,
+      to: req.query.to,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get("/admin/usage-report", async (req, res) => {
+  const apiKey = await getAdminApiKey();
+  if (!apiKey) return res.status(400).json({ error: "Admin API key not configured" });
+
+  try {
+    const data = await fetchUsageReport(apiKey, {
+      from: req.query.from,
+      to: req.query.to,
+      groupBy: req.query.group_by,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function whereClause(from, to, user, table = "api_requests") {
   const conds = [];
@@ -277,6 +444,71 @@ function query(db, sql, params = []) {
 function scalar(db, sql, params = []) {
   const rows = query(db, sql, params);
   return rows[0]?.v ?? 0;
+}
+
+function getBillingPeriod(cycleDayOfMonth) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const day = now.getDate();
+
+  let periodStart, periodEnd;
+  if (day >= cycleDayOfMonth) {
+    periodStart = new Date(year, month, cycleDayOfMonth);
+    periodEnd = new Date(year, month + 1, cycleDayOfMonth);
+  } else {
+    periodStart = new Date(year, month - 1, cycleDayOfMonth);
+    periodEnd = new Date(year, month, cycleDayOfMonth);
+  }
+
+  const msPerDay = 86400000;
+  const totalDays = Math.round((periodEnd - periodStart) / msPerDay);
+  const daysElapsed = Math.round((now - periodStart) / msPerDay);
+  const daysRemaining = totalDays - daysElapsed;
+
+  return {
+    start: periodStart.toISOString(),
+    end: periodEnd.toISOString(),
+    daysElapsed,
+    daysRemaining,
+    totalDays,
+  };
+}
+
+function computeSessionWindowStats(windows) {
+  if (windows.length === 0) {
+    return { windows: [], summary: {
+      total_windows: 0, avg_cost_per_window: 0, avg_tokens_per_window: 0,
+      avg_requests_per_window: 0, avg_duration_hours: 0,
+      avg_cost_per_active_hour: null, total_cost: 0, total_active_hours: 0,
+    }};
+  }
+
+  const n = windows.length;
+  const totalCost = windows.reduce((s, w) => s + (w.total_cost || 0), 0);
+  const totalTokens = windows.reduce((s, w) => s + (w.total_tokens || 0), 0);
+  const totalRequests = windows.reduce((s, w) => s + w.request_count, 0);
+  const totalActiveHours = windows.reduce((s, w) => s + (w.duration_hours || 0), 0);
+
+  const activeHoursForVelocity = windows
+    .filter(w => w.duration_hours > 0)
+    .reduce((s, w) => s + w.duration_hours, 0);
+
+  return {
+    windows,
+    summary: {
+      total_windows: n,
+      avg_cost_per_window: totalCost / n,
+      avg_tokens_per_window: Math.round(totalTokens / n),
+      avg_requests_per_window: Math.round(totalRequests / n),
+      avg_duration_hours: Math.round((totalActiveHours / n) * 100) / 100,
+      avg_cost_per_active_hour: activeHoursForVelocity > 0
+        ? Math.round((totalCost / activeHoursForVelocity) * 100) / 100
+        : null,
+      total_cost: Math.round(totalCost * 100) / 100,
+      total_active_hours: Math.round(totalActiveHours * 100) / 100,
+    },
+  };
 }
 
 module.exports = router;
