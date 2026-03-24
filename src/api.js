@@ -5,6 +5,7 @@ const {
   setAdminApiKey,
   fetchCostReport,
   fetchUsageReport,
+  fetchClaudeCodeRange,
 } = require("./admin-api");
 
 const router = express.Router();
@@ -517,6 +518,38 @@ router.get("/admin/usage-report", async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ── Per-user Anthropic-reported cost (Claude Code Analytics API) ─────────────
+router.get("/admin/per-user-cost", async (req, res) => {
+  const apiKey = await getAdminApiKey();
+  if (!apiKey) return res.json({ available: false });
+
+  const db = await getDb();
+  const configRows = query(db, "SELECT * FROM plan_config LIMIT 1");
+  const config = configRows[0] || { billing_cycle_day: 1 };
+  const period = getBillingPeriod(config.billing_cycle_day);
+
+  try {
+    const byUser = await fetchClaudeCodeRange(
+      apiKey,
+      period.start.slice(0, 10),
+      period.end.slice(0, 10)
+    );
+
+    // Convert to array with cost in dollars
+    const users = Object.entries(byUser).map(([email, data]) => ({
+      email,
+      anthropic_cost: Math.round(data.estimated_cost_cents) / 100, // cents → dollars
+      anthropic_tokens: data.tokens,
+      days_active: data.days_active,
+    }));
+
+    res.json({ available: true, billing_period: period, users });
+  } catch (err) {
+    console.error("[admin] per-user-cost error:", err.message);
+    res.json({ available: false, error: err.message });
   }
 });
 

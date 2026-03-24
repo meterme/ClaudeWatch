@@ -561,7 +561,7 @@
         <thead>
           <tr>
             <th>User</th><th>Tier</th><th>Requests</th>
-            <th>Tokens</th><th>Plan Cost</th><th>Token Value</th><th>Value Ratio</th>
+            <th>Tokens</th><th>Plan Cost</th><th>Token Value</th><th>Anthropic Cost</th><th>Value Ratio</th>
             <th>Windows</th><th>Avg/Window</th><th>Velocity</th>
           </tr>
         </thead>
@@ -705,7 +705,7 @@
 
     // ── Render ─────────────────────────────────────────────────────
     async function refresh() {
-      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users, sessionWindows, weeklyWindows, billing] =
+      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users, sessionWindows, weeklyWindows, billing, adminCost] =
         await Promise.all([
           api('/stats/summary'),
           api('/stats/cost-over-time'),
@@ -719,6 +719,7 @@
           api('/stats/session-windows'),
           api('/stats/weekly-windows'),
           api('/stats/billing-summary'),
+          api('/admin/per-user-cost'),
         ]);
 
       // Populate user filter
@@ -738,7 +739,7 @@
       renderModelChart(byModel);
       renderToolChart(tools);
       renderHeatmap(hourly);
-      renderUserTable(byUser, sessionWindows, billing);
+      renderUserTable(byUser, sessionWindows, billing, adminCost);
       renderSessionTable(sessions);
       renderEventTable(events);
     }
@@ -928,7 +929,7 @@
       });
     }
 
-    function renderUserTable(data, sessionWindows, billing) {
+    function renderUserTable(data, sessionWindows, billing, adminCost) {
       // Build per-user window stats from session window data
       const userWindowStats = {};
       if (sessionWindows?.windows) {
@@ -952,6 +953,14 @@
       }
       const seatCosts = billing?.seat_costs || { standard: 20, premium: 100 };
 
+      // Build per-user Anthropic-reported cost from Admin API
+      const adminByUser = {};
+      if (adminCost?.available && adminCost.users) {
+        for (const au of adminCost.users) {
+          adminByUser[au.email.toLowerCase()] = au;
+        }
+      }
+
       const tbody = document.querySelector('#userTable tbody');
       tbody.innerHTML = data.map(u => {
         const ws = userWindowStats[u.user_email];
@@ -966,6 +975,10 @@
         const planCost = tier.toLowerCase() === 'premium' ? seatCosts.premium : seatCosts.standard;
         const tokenValue = bu?.api_equivalent_cost || u.cost || 0;
 
+        // Anthropic-reported cost (from Claude Code Analytics API)
+        const au = adminByUser[(u.user_email || '').toLowerCase()];
+        const anthropicCost = au ? au.anthropic_cost : null;
+
         // Value ratio: token value / plan cost. >1x means plan is a good deal
         const ratio = planCost > 0 ? tokenValue / planCost : null;
         let ratioColor = 'var(--text-dim)';
@@ -977,6 +990,18 @@
           else ratioColor = 'var(--red)';                     // per-token would be cheaper
         }
 
+        // Anthropic cost cell: show cost, flag if it exceeds plan (overage)
+        let anthropicCell;
+        if (anthropicCost == null) {
+          anthropicCell = `<span style="color:var(--text-dim)">—</span>`;
+        } else {
+          const isOverage = anthropicCost > planCost;
+          const color = isOverage ? 'var(--red)' : 'var(--green)';
+          const overageAmt = isOverage ? anthropicCost - planCost : 0;
+          anthropicCell = `<span style="color:${color}">${fmtCost(anthropicCost)}</span>`
+            + (isOverage ? ` <span style="color:var(--red);font-size:11px">(+${fmtCost(overageAmt)})</span>` : '');
+        }
+
         return `<tr>
           <td>${u.user_email || '—'}</td>
           <td><span style="color:${tier.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)'}">${tier}</span></td>
@@ -984,6 +1009,7 @@
           <td>${fmtTokens(userTokens)}</td>
           <td>${fmtCost(planCost)}/mo</td>
           <td style="color:var(--green)">${fmtCost(tokenValue)}</td>
+          <td>${anthropicCell}</td>
           <td style="color:${ratioColor};font-weight:600">${ratioLabel}</td>
           <td>${windows}</td>
           <td>${avgPerWindow != null ? fmtCost(avgPerWindow) : '—'}</td>
