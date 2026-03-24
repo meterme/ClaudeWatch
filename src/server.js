@@ -80,7 +80,7 @@ async function maybeSeedDemo() {
     const auth = isAuthEnabled() ? "enabled" : "disabled (set AUTH_PASS to enable)";
     console.log(`
 ┌──────────────────────────────────────────────────┐
-│  Claude Usage Monitor                            │
+│  ClaudeWatch                                     │
 │  Dashboard:  http://localhost:${PORT}               │
 │  OTLP recv:  http://localhost:${PORT}/v1/logs       │
 │  Auth:       ${auth.padEnd(35)}│

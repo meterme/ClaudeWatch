@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { getDb, persist } = require("./db");
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const AUTH_USER = process.env.AUTH_USER || "admin";
@@ -11,23 +12,36 @@ function isAuthEnabled() {
   return AUTH_PASS.length > 0;
 }
 
-// ── Session store (in-memory) ───────────────────────────────────────────────
-const sessions = new Map();
-
-function createSession(user) {
+// ── Session store (database-backed) ─────────────────────────────────────────
+async function createSession(user) {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { user, createdAt: Date.now() });
+  const db = await getDb();
+  db.run("INSERT INTO sessions (token, user, created_at) VALUES (?, ?, ?)", [
+    token,
+    user,
+    Date.now(),
+  ]);
+  persist();
   return token;
 }
 
-function validateSession(token) {
-  const s = sessions.get(token);
-  if (!s) return null;
-  if (Date.now() - s.createdAt > SESSION_TTL_MS) {
-    sessions.delete(token);
+async function validateSession(token) {
+  const db = await getDb();
+  const stmt = db.prepare("SELECT user, created_at FROM sessions WHERE token = ?");
+  stmt.bind([token]);
+  if (!stmt.step()) {
+    stmt.free();
     return null;
   }
-  return s;
+  const row = stmt.getAsObject();
+  stmt.free();
+
+  if (Date.now() - row.created_at > SESSION_TTL_MS) {
+    db.run("DELETE FROM sessions WHERE token = ?", [token]);
+    persist();
+    return null;
+  }
+  return { user: row.user, createdAt: row.created_at };
 }
 
 // ── Cookie helpers ──────────────────────────────────────────────────────────
@@ -79,17 +93,24 @@ function authMiddleware(req, res, next) {
 
   const cookies = parseCookies(req.headers.cookie);
   const token = unsignCookie(cookies.session_token);
-  if (token && validateSession(token)) return next();
-
-  // API calls get 401; page requests redirect to login
-  if (req.path.startsWith("/api/")) {
-    return res.status(401).json({ error: "Unauthorized" });
+  if (!token) {
+    if (req.path.startsWith("/api/")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    return res.redirect("/login");
   }
-  return res.redirect("/login");
+
+  validateSession(token).then((session) => {
+    if (session) return next();
+    if (req.path.startsWith("/api/")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    return res.redirect("/login");
+  });
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
-function loginHandler(req, res) {
+async function loginHandler(req, res) {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: "Missing credentials" });
@@ -106,24 +127,28 @@ function loginHandler(req, res) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  const token = createSession(username);
+  const token = await createSession(username);
   setSessionCookie(res, token);
   res.json({ ok: true });
 }
 
-function logoutHandler(req, res) {
+async function logoutHandler(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const token = unsignCookie(cookies.session_token);
-  if (token) sessions.delete(token);
+  if (token) {
+    const db = await getDb();
+    db.run("DELETE FROM sessions WHERE token = ?", [token]);
+    persist();
+  }
   clearSessionCookie(res);
   res.json({ ok: true });
 }
 
-function authCheckHandler(req, res) {
+async function authCheckHandler(req, res) {
   if (!isAuthEnabled()) return res.json({ authenticated: true, authEnabled: false });
   const cookies = parseCookies(req.headers.cookie);
   const token = unsignCookie(cookies.session_token);
-  const session = token ? validateSession(token) : null;
+  const session = token ? await validateSession(token) : null;
   res.json({ authenticated: !!session, authEnabled: true });
 }
 
@@ -138,7 +163,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Login — Claude Usage Monitor</title>
+  <title>Login — ClaudeWatch</title>
   <style>
     :root {
       --bg: #0f1117;
@@ -234,7 +259,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
   <div class="login-card">
     <h1>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
-      Claude Usage Monitor
+      ClaudeWatch
     </h1>
     <div class="subtitle">Sign in to access the dashboard</div>
     <div class="error" id="error"></div>
