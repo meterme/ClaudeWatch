@@ -132,14 +132,29 @@ function migrate(db) {
 
   db.run(`
     CREATE TABLE IF NOT EXISTS plan_config (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      plan_name             TEXT NOT NULL DEFAULT 'Team',
-      seat_type             TEXT NOT NULL DEFAULT 'standard',
-      seat_count            INTEGER NOT NULL DEFAULT 1,
-      monthly_seat_cost_usd REAL NOT NULL DEFAULT 20.0,
-      billing_cycle_day     INTEGER NOT NULL DEFAULT 1,
-      created_at            TEXT NOT NULL,
-      updated_at            TEXT NOT NULL
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      billing_cycle_day         INTEGER NOT NULL DEFAULT 1,
+      standard_seat_cost_usd    REAL NOT NULL DEFAULT 20.0,
+      premium_seat_cost_usd     REAL NOT NULL DEFAULT 100.0,
+      created_at                TEXT NOT NULL,
+      updated_at                TEXT NOT NULL
+    )
+  `);
+
+  // Drop old columns if upgrading from previous schema (ignore errors)
+  try { db.run(`ALTER TABLE plan_config DROP COLUMN plan_name`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config DROP COLUMN seat_type`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config DROP COLUMN seat_count`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config DROP COLUMN monthly_seat_cost_usd`); } catch (_) {}
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS org_members (
+      email         TEXT PRIMARY KEY,
+      name          TEXT,
+      role          TEXT,
+      status        TEXT,
+      seat_tier     TEXT,
+      imported_at   TEXT NOT NULL
     )
   `);
 

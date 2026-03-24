@@ -265,40 +265,38 @@ router.get("/plan-config", async (req, res) => {
   const db = await getDb();
   const rows = query(db, "SELECT * FROM plan_config LIMIT 1");
   const apiKey = await getAdminApiKey();
+  const members = query(db, "SELECT email, name, seat_tier, status, imported_at FROM org_members ORDER BY name");
   res.json({
     plan: rows[0] || null,
     hasAdminApiKey: !!apiKey,
+    members,
   });
 });
 
 router.post("/plan-config", async (req, res) => {
   const db = await getDb();
   const {
-    plan_name = "Team",
-    seat_type = "standard",
-    seat_count = 1,
-    monthly_seat_cost_usd = 20,
     billing_cycle_day = 1,
+    standard_seat_cost_usd = 20,
+    premium_seat_cost_usd = 100,
     admin_api_key,
   } = req.body || {};
 
   const now = new Date().toISOString();
   const existing = query(db, "SELECT id FROM plan_config LIMIT 1");
+  const day = Math.min(28, Math.max(1, billing_cycle_day));
 
   if (existing.length > 0) {
     db.run(
-      `UPDATE plan_config SET plan_name=?, seat_type=?, seat_count=?,
-       monthly_seat_cost_usd=?, billing_cycle_day=?, updated_at=? WHERE id=?`,
-      [plan_name, seat_type, seat_count, monthly_seat_cost_usd,
-       Math.min(28, Math.max(1, billing_cycle_day)), now, existing[0].id]
+      `UPDATE plan_config SET billing_cycle_day=?, standard_seat_cost_usd=?,
+       premium_seat_cost_usd=?, updated_at=? WHERE id=?`,
+      [day, standard_seat_cost_usd, premium_seat_cost_usd, now, existing[0].id]
     );
   } else {
     db.run(
-      `INSERT INTO plan_config (plan_name, seat_type, seat_count,
-       monthly_seat_cost_usd, billing_cycle_day, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?)`,
-      [plan_name, seat_type, seat_count, monthly_seat_cost_usd,
-       Math.min(28, Math.max(1, billing_cycle_day)), now, now]
+      `INSERT INTO plan_config (billing_cycle_day, standard_seat_cost_usd,
+       premium_seat_cost_usd, created_at, updated_at) VALUES (?,?,?,?,?)`,
+      [day, standard_seat_cost_usd, premium_seat_cost_usd, now, now]
     );
   }
 
@@ -308,6 +306,54 @@ router.post("/plan-config", async (req, res) => {
 
   persist();
   res.json({ ok: true });
+});
+
+// ── Members CSV import ───────────────────────────────────────────────────────
+router.post("/members/import", express.text({ type: "text/csv", limit: "1mb" }), async (req, res) => {
+  const csv = req.body;
+  if (!csv) return res.status(400).json({ error: "No CSV body" });
+
+  const lines = csv.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return res.status(400).json({ error: "CSV appears empty" });
+
+  // Parse header row to find column indexes (case-insensitive)
+  const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+  const col = (name) => headers.indexOf(name);
+  const iName = col("name"), iEmail = col("email"), iRole = col("role");
+  const iStatus = col("status"), iTier = col("seat tier");
+
+  if (iEmail === -1) return res.status(400).json({ error: "CSV missing Email column" });
+
+  const db = await getDb();
+  const now = new Date().toISOString();
+  let upserted = 0;
+
+  for (const line of lines.slice(1)) {
+    const cells = line.split(",").map(c => c.trim());
+    const email = cells[iEmail];
+    if (!email) continue;
+
+    db.run(
+      `INSERT INTO org_members (email, name, role, status, seat_tier, imported_at)
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT(email) DO UPDATE SET
+         name=excluded.name, role=excluded.role, status=excluded.status,
+         seat_tier=excluded.seat_tier, imported_at=excluded.imported_at`,
+      [
+        email,
+        iName >= 0 ? cells[iName] || null : null,
+        iRole >= 0 ? cells[iRole] || null : null,
+        iStatus >= 0 ? cells[iStatus] || null : null,
+        iTier >= 0 ? cells[iTier] || null : null,
+        now,
+      ]
+    );
+    upserted++;
+  }
+
+  persist();
+  const members = query(db, "SELECT email, name, seat_tier, status, imported_at FROM org_members ORDER BY name");
+  res.json({ ok: true, upserted, members });
 });
 
 // ── 5-hour session windows ──────────────────────────────────────────────────
@@ -355,25 +401,35 @@ router.get("/stats/overage", async (req, res) => {
   }
   const config = configRows[0];
   const period = getBillingPeriod(config.billing_cycle_day);
-  const basePlanCost = config.seat_count * config.monthly_seat_cost_usd;
 
-  const totalCost = scalar(db,
-    `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests
-     WHERE timestamp >= ? AND timestamp < ?`,
-    [period.start, period.end]);
-
+  // Per-user cost joined with seat tier
   const byUser = query(db,
-    `SELECT user_email,
-            SUM(cost_usd) AS cost,
+    `SELECT ar.user_email,
+            COALESCE(m.name, ar.user_email) AS name,
+            COALESCE(m.seat_tier, 'Standard') AS seat_tier,
+            SUM(ar.cost_usd) AS cost,
             COUNT(*) AS requests,
-            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS tokens
-     FROM api_requests
-     WHERE timestamp >= ? AND timestamp < ?
-     GROUP BY user_email
+            SUM(COALESCE(ar.input_tokens,0) + COALESCE(ar.output_tokens,0)) AS tokens
+     FROM api_requests ar
+     LEFT JOIN org_members m ON LOWER(ar.user_email) = LOWER(m.email)
+     WHERE ar.timestamp >= ? AND ar.timestamp < ?
+     GROUP BY ar.user_email
      ORDER BY cost DESC`,
     [period.start, period.end]);
 
-  const overage = Math.max(0, totalCost - basePlanCost);
+  // Compute per-user included cost and overage
+  let totalCost = 0, basePlanCost = 0, totalOverage = 0;
+  const byUserWithOverage = byUser.map(u => {
+    const included = u.seat_tier.toLowerCase() === "premium"
+      ? config.premium_seat_cost_usd
+      : config.standard_seat_cost_usd;
+    const overage = Math.max(0, u.cost - included);
+    totalCost += u.cost;
+    basePlanCost += included;
+    totalOverage += overage;
+    return { ...u, included_cost: included, overage, in_plan: Math.min(u.cost, included) };
+  });
+
   const projectedCost = period.daysElapsed > 0
     ? (totalCost / period.daysElapsed) * period.totalDays
     : 0;
@@ -381,11 +437,11 @@ router.get("/stats/overage", async (req, res) => {
   res.json({
     configured: true,
     billing_period: period,
-    base_plan_cost: basePlanCost,
-    total_cost: totalCost,
-    overage,
+    base_plan_cost: Math.round(basePlanCost * 100) / 100,
+    total_cost: Math.round(totalCost * 100) / 100,
+    overage: Math.round(totalOverage * 100) / 100,
     projected_end_of_period: Math.round(projectedCost * 100) / 100,
-    by_user: byUser,
+    by_user: byUserWithOverage,
   });
 });
 
