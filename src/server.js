@@ -4,6 +4,7 @@ const { ingestOtlpLogs } = require("./otlp");
 const apiRouter = require("./api");
 const { getDb } = require("./db");
 const {
+  initAuth,
   isAuthEnabled,
   authMiddleware,
   loginHandler,
@@ -74,10 +75,11 @@ async function maybeSeedDemo() {
 // ── Start ───────────────────────────────────────────────────────────────────
 (async () => {
   await getDb(); // ensure DB is initialized
+  await initAuth(); // ensure auth password exists
   await maybeSeedDemo();
 
   app.listen(PORT, () => {
-    const auth = isAuthEnabled() ? "enabled" : "disabled (set AUTH_PASS to enable)";
+    const auth = isAuthEnabled() ? "enabled" : "disabled (AUTH_DISABLED=1)";
     console.log(`
 ┌──────────────────────────────────────────────────┐
 │  ClaudeWatch                                     │

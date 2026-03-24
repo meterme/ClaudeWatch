@@ -3,13 +3,42 @@ const { getDb, persist } = require("./db");
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const AUTH_USER = process.env.AUTH_USER || "admin";
-const AUTH_PASS = process.env.AUTH_PASS || "";
+const AUTH_DISABLED = process.env.AUTH_DISABLED === "1";
 const SESSION_SECRET =
   process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+let authPass = process.env.AUTH_PASS || null;
+
 function isAuthEnabled() {
-  return AUTH_PASS.length > 0;
+  return !AUTH_DISABLED && authPass !== null;
+}
+
+// Called at startup to ensure a password exists.
+// If AUTH_PASS env is set, use it. Otherwise load/generate one in the DB.
+async function initAuth() {
+  if (AUTH_DISABLED) return;
+  if (authPass) return; // set via env
+
+  const db = await getDb();
+  const stmt = db.prepare("SELECT value FROM config WHERE key = ?");
+  stmt.bind(["auth_pass"]);
+  if (stmt.step()) {
+    authPass = stmt.getAsObject().value;
+    stmt.free();
+    return;
+  }
+  stmt.free();
+
+  // First run — generate and persist a random password
+  authPass = crypto.randomBytes(16).toString("hex");
+  db.run("INSERT INTO config (key, value) VALUES (?, ?)", [
+    "auth_pass",
+    authPass,
+  ]);
+  persist();
+  console.log(`\n[auth] Generated password for user "${AUTH_USER}": ${authPass}`);
+  console.log("[auth] Set AUTH_PASS env to use your own, or AUTH_DISABLED=1 to disable.\n");
 }
 
 // ── Session store (database-backed) ─────────────────────────────────────────
@@ -120,8 +149,8 @@ async function loginHandler(req, res) {
     username.length === AUTH_USER.length &&
     crypto.timingSafeEqual(Buffer.from(username), Buffer.from(AUTH_USER));
   const passOk =
-    password.length === AUTH_PASS.length &&
-    crypto.timingSafeEqual(Buffer.from(password), Buffer.from(AUTH_PASS));
+    password.length === authPass.length &&
+    crypto.timingSafeEqual(Buffer.from(password), Buffer.from(authPass));
 
   if (!userOk || !passOk) {
     return res.status(401).json({ error: "Invalid credentials" });
@@ -305,6 +334,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </html>`;
 
 module.exports = {
+  initAuth,
   isAuthEnabled,
   authMiddleware,
   loginHandler,
