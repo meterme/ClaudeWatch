@@ -371,6 +371,7 @@
       <label>User</label>
       <select id="filterUser"><option value="">All</option></select>
       <button onclick="refresh()">Apply</button>
+      <button id="logoutBtn" style="display:none;background:var(--surface2);border:1px solid var(--border)" onclick="logout()">Logout</button>
     </div>
   </header>
 
@@ -468,6 +469,7 @@
 
     async function api(path) {
       const res = await fetch('/api' + path + qs());
+      if (res.status === 401) { window.location.href = '/login'; return; }
       return res.json();
     }
 
@@ -718,7 +720,9 @@
       body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim)">Loading...</div>';
       modal.classList.add('open');
 
-      const data = await fetch('/api/sessions/' + encodeURIComponent(sessionId)).then(r => r.json());
+      const sessionRes = await fetch('/api/sessions/' + encodeURIComponent(sessionId));
+      if (sessionRes.status === 401) { window.location.href = '/login'; return; }
+      const data = await sessionRes.json();
 
       document.getElementById('modalTitle').textContent = 'Session: ' + sessionId;
       document.getElementById('modalMeta').textContent =
@@ -787,6 +791,16 @@
     const ago = new Date(now - 30 * 86400000);
     document.getElementById('filterFrom').value = ago.toISOString().slice(0, 10);
     document.getElementById('filterTo').value = now.toISOString().slice(0, 10);
+
+    // Show logout button if auth is enabled
+    fetch('/auth/check').then(r => r.json()).then(d => {
+      if (d.authEnabled) document.getElementById('logoutBtn').style.display = '';
+    });
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    }
 
     refresh();
   </script>

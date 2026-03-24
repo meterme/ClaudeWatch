@@ -3,15 +3,28 @@ const path = require("path");
 const { ingestOtlpLogs } = require("./otlp");
 const apiRouter = require("./api");
 const { getDb } = require("./db");
+const {
+  isAuthEnabled,
+  authMiddleware,
+  loginHandler,
+  logoutHandler,
+  authCheckHandler,
+  loginPageHandler,
+} = require("./auth");
 
 const app = express();
 const PORT = process.env.PORT || 3456;
 
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static(path.join(__dirname, "..", "public")));
 
-// ── OTLP HTTP/JSON receiver ─────────────────────────────────────────────────
+// ── Auth routes (unauthenticated) ───────────────────────────────────────────
+app.get("/login", loginPageHandler);
+app.post("/auth/login", loginHandler);
+app.post("/auth/logout", logoutHandler);
+app.get("/auth/check", authCheckHandler);
+
+// ── OTLP HTTP/JSON receiver (unauthenticated) ──────────────────────────────
 // Claude Code sends to: POST /v1/logs
 app.post("/v1/logs", async (req, res) => {
   try {
@@ -35,7 +48,11 @@ app.post("/v1/logs/", async (req, res) => {
   }
 });
 
-// ── REST API ────────────────────────────────────────────────────────────────
+// ── Auth middleware (everything below requires login) ────────────────────────
+app.use(authMiddleware);
+
+// ── Protected static files & API ────────────────────────────────────────────
+app.use(express.static(path.join(__dirname, "..", "public")));
 app.use("/api", apiRouter);
 
 // ── Seed demo data (opt-in via env) ─────────────────────────────────────────
@@ -60,12 +77,14 @@ async function maybeSeedDemo() {
   await maybeSeedDemo();
 
   app.listen(PORT, () => {
+    const auth = isAuthEnabled() ? "enabled" : "disabled (set AUTH_PASS to enable)";
     console.log(`
-┌─────────────────────────────────────────────┐
-│  Claude Usage Monitor                       │
-│  Dashboard:  http://localhost:${PORT}          │
-│  OTLP recv:  http://localhost:${PORT}/v1/logs  │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Claude Usage Monitor                            │
+│  Dashboard:  http://localhost:${PORT}               │
+│  OTLP recv:  http://localhost:${PORT}/v1/logs       │
+│  Auth:       ${auth.padEnd(35)}│
+└──────────────────────────────────────────────────┘
     `);
   });
 })();
