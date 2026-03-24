@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Usage Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242736;
+      --border: #2e3142;
+      --text: #e1e4ed;
+      --text-dim: #8b8fa3;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f59e0b;
+      --cyan: #06b6d4;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filters label { font-size: 13px; color: var(--text-dim); }
+
+    .filters select, .filters input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .filters button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .filters button:hover { background: var(--accent2); }
+
+    main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── KPI cards ─────────────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .kpi .label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .kpi .value {
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kpi .value.cost { color: var(--green); }
+    .kpi .value.error { color: var(--red); }
+
+    /* ── Chart panels ──────────────────────────────────────────────── */
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .chart-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .chart-panel h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-dim);
+    }
+
+    .chart-panel canvas { max-height: 280px; }
+
+    .chart-panel.wide { grid-column: 1 / -1; }
+
+    /* ── Table ─────────────────────────────────────────────────────── */
+    .table-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+
+    .table-panel h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-dim);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-dim);
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+
+    tr:hover td { background: var(--surface2); }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .tag-req  { background: #6366f133; color: var(--accent2); }
+    .tag-tool { background: #06b6d433; color: var(--cyan); }
+    .tag-err  { background: #ef444433; color: var(--red); }
+    .tag-prompt { background: #22c55e33; color: var(--green); }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
+    .empty-state code {
+      display: inline-block;
+      background: var(--surface2);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    /* ── Sessions & Conversation ──────────────────────────────────── */
+    .session-row { cursor: pointer; }
+    .session-row:hover td { background: var(--surface2); }
+
+    #conversationModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      overflow-y: auto;
+    }
+
+    #conversationModal.open { display: flex; justify-content: center; padding: 40px 20px; }
+
+    .modal-content {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 900px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 12px 12px 0 0;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .modal-header h2 { font-size: 15px; font-weight: 600; }
+
+    .modal-header .meta { font-size: 12px; color: var(--text-dim); }
+
+    .modal-close {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-close:hover { background: var(--surface2); }
+
+    .conversation-body { padding: 20px; }
+
+    .turn {
+      margin-bottom: 20px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .turn-prompt {
+      background: var(--surface2);
+      padding: 14px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .turn-response {
+      background: var(--surface);
+      padding: 14px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .turn-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .avatar-user { background: var(--accent); color: white; }
+    .avatar-ai { background: var(--cyan); color: white; }
+
+    .turn-text {
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .turn-meta {
+      display: flex;
+      gap: 12px;
+      padding: 8px 16px 8px 56px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-dim);
+      flex-wrap: wrap;
+    }
+
+    .turn-tools {
+      padding: 8px 16px 10px 56px;
+      background: var(--surface);
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tool-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #06b6d422;
+      color: var(--cyan);
+    }
+
+    .tool-chip.fail { background: #ef444422; color: var(--red); }
+
+    .no-content { color: var(--text-dim); font-style: italic; }
+
+    @media (max-width: 800px) {
+      .charts { grid-template-columns: 1fr; }
+      .chart-panel.wide { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+      Claude Usage Monitor
+    </h1>
+    <div class="filters">
+      <label>From</label>
+      <input type="date" id="filterFrom">
+      <label>To</label>
+      <input type="date" id="filterTo">
+      <label>User</label>
+      <select id="filterUser"><option value="">All</option></select>
+      <button onclick="refresh()">Apply</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="kpi-grid" id="kpis"></div>
+
+    <div class="charts">
+      <div class="chart-panel wide">
+        <h2>Cost & Requests Over Time</h2>
+        <canvas id="chartCostTime"></canvas>
+      </div>
+      <div class="chart-panel">
+        <h2>Usage by Model</h2>
+        <canvas id="chartModel"></canvas>
+      </div>
+      <div class="chart-panel">
+        <h2>Tool Usage</h2>
+        <canvas id="chartTools"></canvas>
+      </div>
+      <div class="chart-panel wide">
+        <h2>Activity Heatmap (Hour of Day × Day of Week)</h2>
+        <canvas id="chartHeatmap"></canvas>
+      </div>
+    </div>
+
+    <div class="table-panel">
+      <h2>Cost by User</h2>
+      <table id="userTable">
+        <thead>
+          <tr>
+            <th>User</th><th>Requests</th><th>Sessions</th>
+            <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="table-panel">
+      <h2>Sessions</h2>
+      <table id="sessionTable">
+        <thead>
+          <tr>
+            <th>Started</th><th>User</th><th>Prompts</th>
+            <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th><th>Duration</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="table-panel">
+      <h2>Recent Events</h2>
+      <table id="eventTable">
+        <thead>
+          <tr><th>Time</th><th>Type</th><th>User</th><th>Detail</th><th>Value</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="conversationModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h2 id="modalTitle">Session</h2>
+            <div class="meta" id="modalMeta"></div>
+          </div>
+          <button class="modal-close" onclick="closeConversation()">&times;</button>
+        </div>
+        <div class="conversation-body" id="conversationBody"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let charts = {};
+
+    // ── Chart.js defaults ──────────────────────────────────────────
+    Chart.defaults.color = '#8b8fa3';
+    Chart.defaults.borderColor = '#2e3142';
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, sans-serif';
+    Chart.defaults.font.size = 12;
+
+    // ── Helpers ────────────────────────────────────────────────────
+    function qs() {
+      const p = new URLSearchParams();
+      const from = document.getElementById('filterFrom').value;
+      const to   = document.getElementById('filterTo').value;
+      const user = document.getElementById('filterUser').value;
+      if (from) p.set('from', from);
+      if (to)   p.set('to', to + 'T23:59:59');
+      if (user) p.set('user', user);
+      return p.toString() ? '?' + p.toString() : '';
+    }
+
+    async function api(path) {
+      const res = await fetch('/api' + path + qs());
+      return res.json();
+    }
+
+    function fmt(n) { return n == null ? '—' : n.toLocaleString(); }
+    function fmtCost(n) { return n == null ? '—' : '$' + n.toFixed(2); }
+
+    function destroyChart(id) {
+      if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+    }
+
+    // ── Render ─────────────────────────────────────────────────────
+    async function refresh() {
+      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users] =
+        await Promise.all([
+          api('/stats/summary'),
+          api('/stats/cost-over-time'),
+          api('/stats/by-model'),
+          api('/stats/tools'),
+          api('/stats/hourly-activity'),
+          api('/stats/by-user'),
+          api('/sessions'),
+          api('/events/recent'),
+          api('/users'),
+        ]);
+
+      // Populate user filter
+      const sel = document.getElementById('filterUser');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All</option>';
+      users.forEach(u => {
+        const o = document.createElement('option');
+        o.value = u; o.textContent = u;
+        if (u === current) o.selected = true;
+        sel.appendChild(o);
+      });
+
+      renderKPIs(summary);
+      renderCostTime(costTime);
+      renderModelChart(byModel);
+      renderToolChart(tools);
+      renderHeatmap(hourly);
+      renderUserTable(byUser);
+      renderSessionTable(sessions);
+      renderEventTable(events);
+    }
+
+    function renderKPIs(s) {
+      document.getElementById('kpis').innerHTML = `
+        <div class="kpi"><div class="label">Total Cost</div><div class="value cost">${fmtCost(s.totalCost)}</div></div>
+        <div class="kpi"><div class="label">API Requests</div><div class="value">${fmt(s.totalRequests)}</div></div>
+        <div class="kpi"><div class="label">Prompts</div><div class="value">${fmt(s.totalPrompts)}</div></div>
+        <div class="kpi"><div class="label">Input Tokens</div><div class="value">${fmt(s.totalTokensIn)}</div></div>
+        <div class="kpi"><div class="label">Output Tokens</div><div class="value">${fmt(s.totalTokensOut)}</div></div>
+        <div class="kpi"><div class="label">Errors</div><div class="value error">${fmt(s.totalErrors)}</div></div>
+        <div class="kpi"><div class="label">Users</div><div class="value">${fmt(s.uniqueUsers)}</div></div>
+        <div class="kpi"><div class="label">Sessions</div><div class="value">${fmt(s.uniqueSessions)}</div></div>
+      `;
+    }
+
+    function renderCostTime(data) {
+      destroyChart('costTime');
+      charts.costTime = new Chart(document.getElementById('chartCostTime'), {
+        type: 'bar',
+        data: {
+          labels: data.map(d => d.day),
+          datasets: [
+            {
+              label: 'Cost ($)',
+              data: data.map(d => d.cost),
+              backgroundColor: '#6366f1aa',
+              borderRadius: 4,
+              yAxisID: 'y',
+              order: 2,
+            },
+            {
+              label: 'Requests',
+              data: data.map(d => d.requests),
+              type: 'line',
+              borderColor: '#06b6d4',
+              backgroundColor: '#06b6d433',
+              fill: true,
+              tension: 0.3,
+              yAxisID: 'y1',
+              order: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y:  { position: 'left',  title: { display: true, text: 'Cost ($)' }, grid: { color: '#2e314255' } },
+            y1: { position: 'right', title: { display: true, text: 'Requests' }, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+    }
+
+    function renderModelChart(data) {
+      destroyChart('model');
+      const colors = ['#6366f1', '#06b6d4', '#22c55e', '#f59e0b', '#ef4444', '#a855f7'];
+      charts.model = new Chart(document.getElementById('chartModel'), {
+        type: 'doughnut',
+        data: {
+          labels: data.map(d => d.model || 'unknown'),
+          datasets: [{
+            data: data.map(d => d.cost),
+            backgroundColor: colors.slice(0, data.length),
+            borderWidth: 0,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 12 } },
+            tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtCost(ctx.raw)}` } },
+          },
+        },
+      });
+    }
+
+    function renderToolChart(data) {
+      destroyChart('tools');
+      const top = data.slice(0, 10);
+      charts.tools = new Chart(document.getElementById('chartTools'), {
+        type: 'bar',
+        data: {
+          labels: top.map(d => d.tool_name || 'unknown'),
+          datasets: [
+            { label: 'Success', data: top.map(d => d.successes), backgroundColor: '#22c55eaa', borderRadius: 3 },
+            { label: 'Failure', data: top.map(d => d.failures), backgroundColor: '#ef4444aa', borderRadius: 3 },
+          ],
+        },
+        options: {
+          responsive: true,
+          indexAxis: 'y',
+          scales: { x: { stacked: true, grid: { color: '#2e314255' } }, y: { stacked: true } },
+          plugins: { legend: { position: 'bottom' } },
+        },
+      });
+    }
+
+    function renderHeatmap(data) {
+      destroyChart('heatmap');
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      // Build a 7×24 matrix
+      const matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
+      let max = 0;
+      data.forEach(d => { matrix[d.dow][d.hour] = d.requests; if (d.requests > max) max = d.requests; });
+
+      // Flatten to bubble chart points
+      const points = [];
+      for (let dow = 0; dow < 7; dow++) {
+        for (let h = 0; h < 24; h++) {
+          if (matrix[dow][h] > 0) {
+            points.push({ x: h, y: dow, r: Math.max(2, (matrix[dow][h] / max) * 14), v: matrix[dow][h] });
+          }
+        }
+      }
+
+      charts.heatmap = new Chart(document.getElementById('chartHeatmap'), {
+        type: 'bubble',
+        data: {
+          datasets: [{
+            data: points,
+            backgroundColor: '#6366f1aa',
+            borderColor: '#6366f1',
+            borderWidth: 1,
+          }],
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: {
+              min: -0.5, max: 23.5,
+              ticks: { callback: v => `${v}:00`, stepSize: 3 },
+              title: { display: true, text: 'Hour (UTC)' },
+              grid: { color: '#2e314233' },
+            },
+            y: {
+              min: -0.5, max: 6.5,
+              ticks: { callback: v => days[v] || '' },
+              reverse: true,
+              grid: { color: '#2e314233' },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => `${days[ctx.raw.y]} ${ctx.raw.x}:00 — ${ctx.raw.v} requests` } },
+          },
+        },
+      });
+    }
+
+    function renderUserTable(data) {
+      const tbody = document.querySelector('#userTable tbody');
+      tbody.innerHTML = data.map(u => `
+        <tr>
+          <td>${u.user_email || '—'}</td>
+          <td>${fmt(u.requests)}</td>
+          <td>${fmt(u.sessions)}</td>
+          <td>${fmt(u.input_tokens)}</td>
+          <td>${fmt(u.output_tokens)}</td>
+          <td style="color:var(--green)">${fmtCost(u.cost)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderEventTable(data) {
+      const tbody = document.querySelector('#eventTable tbody');
+      const tagClass = { api_request: 'tag-req', tool_use: 'tag-tool', error: 'tag-err', prompt: 'tag-prompt' };
+      tbody.innerHTML = data.slice(0, 100).map(e => {
+        const ts = new Date(e.timestamp).toLocaleString();
+        const cls = tagClass[e.type] || 'tag-req';
+        return `<tr>
+          <td style="white-space:nowrap">${ts}</td>
+          <td><span class="tag ${cls}">${e.type}</span></td>
+          <td>${e.user_email || '—'}</td>
+          <td>${e.model || '—'}</td>
+          <td>${e.type === 'api_request' ? fmtCost(e.cost_usd) : fmt(e.cost_usd)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ── Sessions ─────────────────────────────────────────────────
+    function renderSessionTable(data) {
+      const tbody = document.querySelector('#sessionTable tbody');
+      tbody.innerHTML = data.map(s => {
+        const started = new Date(s.started).toLocaleString();
+        const dur = s.ended && s.started
+          ? Math.round((new Date(s.ended) - new Date(s.started)) / 60000) + 'm'
+          : '—';
+        return `<tr class="session-row" onclick="openConversation('${s.session_id}')">
+          <td style="white-space:nowrap">${started}</td>
+          <td>${s.user_email || '—'}</td>
+          <td>${fmt(s.requests)}</td>
+          <td>${fmt(s.input_tokens)}</td>
+          <td>${fmt(s.output_tokens)}</td>
+          <td style="color:var(--green)">${fmtCost(s.cost)}</td>
+          <td>${dur}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function openConversation(sessionId) {
+      const modal = document.getElementById('conversationModal');
+      const body = document.getElementById('conversationBody');
+      body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim)">Loading...</div>';
+      modal.classList.add('open');
+
+      const data = await fetch('/api/sessions/' + encodeURIComponent(sessionId)).then(r => r.json());
+
+      document.getElementById('modalTitle').textContent = 'Session: ' + sessionId;
+      document.getElementById('modalMeta').textContent =
+        data.conversation.length + ' turns';
+
+      if (data.conversation.length === 0) {
+        body.innerHTML = '<div class="no-content" style="text-align:center;padding:40px">No prompt/response data for this session</div>';
+        return;
+      }
+
+      body.innerHTML = data.conversation.map(turn => {
+        const promptHtml = turn.prompt
+          ? escHtml(turn.prompt)
+          : '<span class="no-content">No prompt content recorded</span>';
+        const responseHtml = turn.response
+          ? escHtml(turn.response)
+          : '<span class="no-content">No response content recorded</span>';
+
+        const toolsHtml = turn.tools.length > 0
+          ? `<div class="turn-tools">${turn.tools.map(t =>
+              `<span class="tool-chip ${t.success ? '' : 'fail'}">${escHtml(t.tool_name)}${t.duration_ms ? ' ' + t.duration_ms + 'ms' : ''}</span>`
+            ).join('')}</div>`
+          : '';
+
+        return `<div class="turn">
+          <div class="turn-prompt">
+            <div class="turn-avatar avatar-user">U</div>
+            <div class="turn-text">${promptHtml}</div>
+          </div>
+          <div class="turn-response">
+            <div class="turn-avatar avatar-ai">C</div>
+            <div class="turn-text">${responseHtml}</div>
+          </div>
+          ${toolsHtml}
+          <div class="turn-meta">
+            <span>${turn.model || '—'}</span>
+            <span>${fmt(turn.input_tokens)} in / ${fmt(turn.output_tokens)} out</span>
+            <span>${fmtCost(turn.cost_usd)}</span>
+            ${turn.duration_ms ? '<span>' + (turn.duration_ms / 1000).toFixed(1) + 's</span>' : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function closeConversation() {
+      document.getElementById('conversationModal').classList.remove('open');
+    }
+
+    // Close modal on Escape or backdrop click
+    document.getElementById('conversationModal').addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeConversation();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeConversation();
+    });
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // ── Init ───────────────────────────────────────────────────────
+    // Default date range: last 30 days
+    const now = new Date();
+    const ago = new Date(now - 30 * 86400000);
+    document.getElementById('filterFrom').value = ago.toISOString().slice(0, 10);
+    document.getElementById('filterTo').value = now.toISOString().slice(0, 10);
+
+    refresh();
+  </script>
+</body>
+</html>

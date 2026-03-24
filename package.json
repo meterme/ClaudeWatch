@@ -1,0 +1,14 @@
+{
+  "name": "claude-usage-monitor",
+  "version": "1.0.0",
+  "description": "Monitor and audit Claude Code usage via OpenTelemetry events",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "sql.js": "^1.11.0"
+  }
+}
