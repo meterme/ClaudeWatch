@@ -128,16 +128,20 @@ router.get("/events/recent", async (req, res) => {
   const db = await getDb();
   const limit = Math.min(parseInt(req.query.limit) || 50, 500);
   const rows = query(db,
-    `SELECT 'api_request' AS type, timestamp, user_email, model, cost_usd, session_id
+    `SELECT 'api_request' AS type, timestamp, user_email, model, cost_usd, session_id,
+            input_tokens, output_tokens
      FROM api_requests
      UNION ALL
-     SELECT 'tool_use', timestamp, user_email, tool_name, duration_ms, session_id
+     SELECT 'tool_use', timestamp, user_email, tool_name, duration_ms, session_id,
+            NULL, NULL
      FROM tool_uses
      UNION ALL
-     SELECT 'prompt', timestamp, user_email, NULL, prompt_length, session_id
+     SELECT 'prompt', timestamp, user_email, NULL, prompt_length, session_id,
+            NULL, NULL
      FROM user_prompts
      UNION ALL
-     SELECT 'error', timestamp, user_email, error_message, status_code, session_id
+     SELECT 'error', timestamp, user_email, error_message, status_code, session_id,
+            NULL, NULL
      FROM api_errors
      ORDER BY timestamp DESC
      LIMIT ?`, [limit]);
@@ -402,15 +406,10 @@ router.get("/stats/session-windows", async (req, res) => {
   res.json(computeSessionWindowStats(windows));
 });
 
-// ── Monthly overage ─────────────────────────────────────────────────────────
-router.get("/stats/overage", async (req, res) => {
+// ── Billing period summary (informational, no overage guessing) ─────────────
+router.get("/stats/billing-summary", async (req, res) => {
   const db = await getDb();
-  const memberCount = scalar(db, "SELECT COUNT(*) AS v FROM org_members");
-  if (memberCount === 0) {
-    return res.json({ configured: false });
-  }
   const configRows = query(db, "SELECT * FROM plan_config LIMIT 1");
-  // Use saved config or fall back to defaults
   const config = configRows[0] || {
     billing_cycle_day: 1,
     standard_seat_cost_usd: 20,
@@ -418,47 +417,75 @@ router.get("/stats/overage", async (req, res) => {
   };
   const period = getBillingPeriod(config.billing_cycle_day);
 
-  // Per-user cost joined with seat tier
+  // Per-user spend in this billing period
   const byUser = query(db,
     `SELECT ar.user_email,
             COALESCE(m.name, ar.user_email) AS name,
             COALESCE(m.seat_tier, 'Standard') AS seat_tier,
-            SUM(ar.cost_usd) AS cost,
+            SUM(ar.cost_usd) AS api_equivalent_cost,
             COUNT(*) AS requests,
             SUM(COALESCE(ar.input_tokens,0) + COALESCE(ar.output_tokens,0)) AS tokens
      FROM api_requests ar
      LEFT JOIN org_members m ON LOWER(ar.user_email) = LOWER(m.email)
      WHERE ar.timestamp >= ? AND ar.timestamp < ?
      GROUP BY ar.user_email
-     ORDER BY cost DESC`,
+     ORDER BY api_equivalent_cost DESC`,
     [period.start, period.end]);
 
-  // Compute per-user included cost and overage
-  let totalCost = 0, basePlanCost = 0, totalOverage = 0;
-  const byUserWithOverage = byUser.map(u => {
-    const included = u.seat_tier.toLowerCase() === "premium"
-      ? config.premium_seat_cost_usd
-      : config.standard_seat_cost_usd;
-    const overage = Math.max(0, u.cost - included);
-    totalCost += u.cost;
-    basePlanCost += included;
-    totalOverage += overage;
-    return { ...u, included_cost: included, overage, in_plan: Math.min(u.cost, included) };
-  });
-
-  const projectedCost = period.daysElapsed > 0
-    ? (totalCost / period.daysElapsed) * period.totalDays
-    : 0;
+  let totalCost = 0, totalTokens = 0;
+  for (const u of byUser) {
+    totalCost += u.api_equivalent_cost || 0;
+    totalTokens += u.tokens || 0;
+  }
 
   res.json({
-    configured: true,
     billing_period: period,
-    base_plan_cost: Math.round(basePlanCost * 100) / 100,
-    total_cost: Math.round(totalCost * 100) / 100,
-    overage: Math.round(totalOverage * 100) / 100,
-    projected_end_of_period: Math.round(projectedCost * 100) / 100,
-    by_user: byUserWithOverage,
+    seat_costs: {
+      standard: config.standard_seat_cost_usd,
+      premium: config.premium_seat_cost_usd,
+    },
+    total_api_equivalent_cost: Math.round(totalCost * 100) / 100,
+    total_tokens: totalTokens,
+    by_user: byUser,
   });
+});
+
+// ── 7-day weekly rolling windows ────────────────────────────────────────────
+router.get("/stats/weekly-windows", async (req, res) => {
+  const db = await getDb();
+  const { from, to, user } = req.query;
+  const wc = whereClause(from, to, user);
+
+  // Group requests into 7-day (168-hour) rolling windows per user,
+  // using same gap-based approach as 5-hour windows but with 7-day threshold
+  const windows = query(db, `
+    WITH ordered AS (
+      SELECT timestamp, user_email, cost_usd, input_tokens, output_tokens,
+        ROUND((julianday(timestamp) - julianday(
+          LAG(timestamp) OVER (PARTITION BY user_email ORDER BY timestamp)
+        )) * 86400) AS gap_seconds
+      FROM api_requests ${wc.sql}
+    ),
+    windowed AS (
+      SELECT *,
+        SUM(CASE WHEN gap_seconds IS NULL OR gap_seconds > 604800 THEN 1 ELSE 0 END)
+          OVER (PARTITION BY user_email ORDER BY timestamp) AS window_id
+      FROM ordered
+    )
+    SELECT user_email, window_id,
+      MIN(timestamp) AS window_start, MAX(timestamp) AS window_end,
+      COUNT(*) AS request_count,
+      ROUND(SUM(cost_usd), 6) AS total_cost,
+      SUM(input_tokens) AS total_input_tokens,
+      SUM(output_tokens) AS total_output_tokens,
+      SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens,
+      ROUND((julianday(MAX(timestamp)) - julianday(MIN(timestamp))) * 24, 4) AS duration_hours
+    FROM windowed
+    GROUP BY user_email, window_id
+    ORDER BY window_start DESC
+  `, wc.params);
+
+  res.json(computeSessionWindowStats(windows));
 });
 
 // ── Admin API proxies ───────────────────────────────────────────────────────

@@ -39,6 +39,9 @@ async function ingestOtlpLogs(payload) {
           rec.observedTimeUnixNano || rec.observed_time_unix_nano
         );
 
+        if (eventName === "claude_code.api_request") {
+          console.log("[otlp-debug] api_request attrs:", JSON.stringify(attrs, null, 2));
+        }
         inserted += insertEvent(db, eventName, ts, attrs);
       }
     }
