@@ -15,24 +15,29 @@ async function ingestOtlpLogs(payload) {
   const db = await getDb();
   let inserted = 0;
 
-  const resourceLogs = payload.resourceLogs || [];
+  // Handle both camelCase and snake_case payload keys
+  const resourceLogs = payload.resourceLogs || payload.resource_logs || [];
   for (const rl of resourceLogs) {
     // Extract resource-level attributes (user, org, etc.)
     const resourceAttrs = attrMap(rl.resource?.attributes || []);
 
-    const scopeLogs = rl.scopeLogs || [];
+    const scopeLogs = rl.scopeLogs || rl.scope_logs || [];
     for (const sl of scopeLogs) {
-      const logRecords = sl.logRecords || [];
+      const logRecords = sl.logRecords || sl.log_records || [];
       for (const rec of logRecords) {
+        const body = rec.body || {};
         const eventName =
-          rec.body?.stringValue ||
+          body.stringValue || body.string_value ||
           attrMap(rec.attributes || [])["event.name"] ||
           "";
         const attrs = {
           ...resourceAttrs,
           ...attrMap(rec.attributes || []),
         };
-        const ts = nanoToISO(rec.timeUnixNano || rec.observedTimeUnixNano);
+        const ts = nanoToISO(
+          rec.timeUnixNano || rec.time_unix_nano ||
+          rec.observedTimeUnixNano || rec.observed_time_unix_nano
+        );
 
         inserted += insertEvent(db, eventName, ts, attrs);
       }
@@ -43,13 +48,19 @@ async function ingestOtlpLogs(payload) {
   return inserted;
 }
 
-/** Convert OTel attribute array to a flat key→value map */
+/** Convert OTel attribute array to a flat key→value map.
+ *  Handles both camelCase (stringValue) and snake_case (string_value)
+ *  protobuf-to-JSON serialization conventions. */
 function attrMap(attributes) {
   const m = {};
   for (const a of attributes) {
     const v = a.value;
     m[a.key] =
-      v.stringValue ?? v.intValue ?? v.doubleValue ?? v.boolValue ?? JSON.stringify(v);
+      v.stringValue ?? v.string_value ??
+      v.intValue ?? v.int_value ??
+      v.doubleValue ?? v.double_value ??
+      v.boolValue ?? v.bool_value ??
+      JSON.stringify(v);
   }
   return m;
 }
@@ -88,10 +99,10 @@ function insertEvent(db, eventName, ts, a) {
           common.org_id,
           a["gen_ai.request.model"] || a["model"] || null,
           toNum(a["cost_usd"] || a["claude_code.cost.usage"]),
-          toInt(a["gen_ai.usage.input_tokens"]),
-          toInt(a["gen_ai.usage.output_tokens"]),
-          toInt(a["cache_read_input_tokens"]),
-          toInt(a["cache_creation_input_tokens"]),
+          toInt(a["gen_ai.usage.input_tokens"] ?? a["input_tokens"] ?? a["llm.usage.prompt_tokens"] ?? a["gen_ai.usage.prompt_tokens"]),
+          toInt(a["gen_ai.usage.output_tokens"] ?? a["output_tokens"] ?? a["llm.usage.completion_tokens"] ?? a["gen_ai.usage.completion_tokens"]),
+          toInt(a["cache_read_input_tokens"] ?? a["gen_ai.usage.cache_read_input_tokens"]),
+          toInt(a["cache_creation_input_tokens"] ?? a["gen_ai.usage.cache_creation_input_tokens"]),
           toInt(a["duration_ms"]),
           a["app.version"] || null,
           a["terminal.type"] || null,

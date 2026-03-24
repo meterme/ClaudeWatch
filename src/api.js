@@ -252,6 +252,16 @@ router.get("/sessions/:id", async (req, res) => {
   res.json({ session_id: sid, conversation });
 });
 
+// ── Diagnostic: sample raw data to debug token ingestion ────────────────────
+router.get("/debug/sample-rows", async (req, res) => {
+  const db = await getDb();
+  const rows = query(db,
+    `SELECT id, timestamp, model, cost_usd, input_tokens, output_tokens,
+            cache_read_tokens, cache_creation_tokens
+     FROM api_requests ORDER BY id DESC LIMIT 10`);
+  res.json(rows);
+});
+
 // ── List known users ────────────────────────────────────────────────────────
 router.get("/users", async (req, res) => {
   const db = await getDb();
