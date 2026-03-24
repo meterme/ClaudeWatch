@@ -386,110 +386,6 @@
       margin-top: 4px;
     }
 
-    .plan-unconfigured {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px 20px;
-      margin-bottom: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .plan-unconfigured span { color: var(--text-dim); font-size: 13px; }
-
-    .plan-unconfigured button {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    /* ── Settings modal ──────────────────────────────────────── */
-    #settingsModal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 1000;
-      background: rgba(0,0,0,0.7);
-      backdrop-filter: blur(4px);
-      overflow-y: auto;
-    }
-
-    #settingsModal.open { display: flex; justify-content: center; padding: 40px 20px; }
-
-    .settings-form {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      width: 100%;
-      max-width: 480px;
-      max-height: calc(100vh - 80px);
-      overflow-y: auto;
-    }
-
-    .settings-form .modal-header { border-radius: 12px 12px 0 0; }
-
-    .settings-body {
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    .settings-body label {
-      display: block;
-      font-size: 12px;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }
-
-    .settings-body input, .settings-body select {
-      display: block;
-      width: 100%;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 6px;
-      font-size: 14px;
-      outline: none;
-    }
-
-    .settings-body input:focus, .settings-body select:focus { border-color: var(--accent); }
-
-    .settings-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    .settings-body .btn-primary {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 10px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      width: 100%;
-    }
-    .settings-body .btn-primary:hover { background: var(--accent2); }
-
-    .settings-body .status-msg {
-      font-size: 13px;
-      color: var(--green);
-      text-align: center;
-      min-height: 20px;
-    }
-
     /* ── Gear button ─────────────────────────────────────────── */
     .gear-btn {
       background: none;
@@ -502,6 +398,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      text-decoration: none;
     }
     .gear-btn:hover { background: var(--surface2); color: var(--text); }
 
@@ -525,9 +422,9 @@
       <label>User</label>
       <select id="filterUser"><option value="">All</option></select>
       <button onclick="refresh()">Apply</button>
-      <button class="gear-btn" onclick="openSettings()" title="Plan settings">
+      <a class="gear-btn" href="/settings.html" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
+      </a>
       <button id="logoutBtn" style="display:none;background:var(--surface2);border:1px solid var(--border)" onclick="logout()">Logout</button>
     </div>
   </header>
@@ -601,63 +498,6 @@
           <button class="modal-close" onclick="closeConversation()">&times;</button>
         </div>
         <div class="conversation-body" id="conversationBody"></div>
-      </div>
-    </div>
-    <div id="settingsModal">
-      <div class="settings-form">
-        <div class="modal-header">
-          <h2>Plan Settings</h2>
-          <button class="modal-close" onclick="closeSettings()">&times;</button>
-        </div>
-        <div class="settings-body">
-          <div class="settings-row">
-            <div>
-              <label>Billing Cycle Day (1-28)</label>
-              <input type="number" id="setBillingDay" value="1" min="1" max="28">
-            </div>
-            <div>
-              <label>Standard Seat Cost ($/mo)</label>
-              <input type="number" id="setStandardCost" value="20" min="0" step="0.01">
-            </div>
-          </div>
-          <div class="settings-row">
-            <div>
-              <label>Premium Seat Cost ($/mo)</label>
-              <input type="number" id="setPremiumCost" value="100" min="0" step="0.01">
-            </div>
-            <div>
-              <label>Anthropic Admin API Key</label>
-              <input type="password" id="setAdminApiKey" placeholder="sk-ant-admin-...">
-            </div>
-          </div>
-          <div class="status-msg" id="settingsStatus"></div>
-          <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
-
-          <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
-            <label>Team Members CSV</label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="file" id="csvFile" accept=".csv" style="flex:1;padding:6px">
-              <button class="btn-primary" style="width:auto;padding:10px 16px" onclick="importCsv()">Import</button>
-            </div>
-            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">
-              Expected columns: Name, Email, Role, Status, Seat Tier
-            </div>
-          </div>
-
-          <div id="membersList" style="display:none;border-top:1px solid var(--border);padding-top:16px">
-            <label style="margin-bottom:8px;display:block">Imported Members <span id="membersCount" style="color:var(--text-dim);font-weight:normal;text-transform:none;letter-spacing:0"></span></label>
-            <div style="max-height:200px;overflow-y:auto">
-              <table style="width:100%;font-size:12px">
-                <thead><tr>
-                  <th style="text-align:left;padding:4px 8px;color:var(--text-dim)">Name</th>
-                  <th style="text-align:left;padding:4px 8px;color:var(--text-dim)">Email</th>
-                  <th style="text-align:left;padding:4px 8px;color:var(--text-dim)">Tier</th>
-                </tr></thead>
-                <tbody id="membersTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </main>
@@ -1134,100 +974,6 @@
     }
 
     // ── Settings modal ──────────────────────────────────────────────
-    async function openSettings() {
-      const modal = document.getElementById('settingsModal');
-      modal.classList.add('open');
-      document.getElementById('settingsStatus').textContent = '';
-
-      try {
-        const data = await api('/plan-config');
-        if (data?.plan) {
-          document.getElementById('setBillingDay').value = data.plan.billing_cycle_day || 1;
-          document.getElementById('setStandardCost').value = data.plan.standard_seat_cost_usd || 20;
-          document.getElementById('setPremiumCost').value = data.plan.premium_seat_cost_usd || 100;
-        }
-        document.getElementById('setAdminApiKey').value = '';
-        document.getElementById('setAdminApiKey').placeholder =
-          data?.hasAdminApiKey ? 'sk-ant-admin-••••••• (configured)' : 'sk-ant-admin-...';
-        if (data?.members?.length) renderMembersList(data.members);
-      } catch (_) {}
-    }
-
-    function closeSettings() {
-      document.getElementById('settingsModal').classList.remove('open');
-    }
-
-    document.getElementById('settingsModal').addEventListener('click', e => {
-      if (e.target === e.currentTarget) closeSettings();
-    });
-
-    async function saveSettings() {
-      const body = {
-        billing_cycle_day: parseInt(document.getElementById('setBillingDay').value) || 1,
-        standard_seat_cost_usd: parseFloat(document.getElementById('setStandardCost').value) || 20,
-        premium_seat_cost_usd: parseFloat(document.getElementById('setPremiumCost').value) || 100,
-      };
-      const apiKey = document.getElementById('setAdminApiKey').value.trim();
-      if (apiKey) body.admin_api_key = apiKey;
-
-      const statusEl = document.getElementById('settingsStatus');
-      try {
-        const res = await fetch('/api/plan-config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (res.status === 401) { window.location.href = '/login'; return; }
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent = 'Settings saved!';
-        setTimeout(() => { closeSettings(); refresh(); }, 800);
-      } catch (err) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = 'Error saving settings';
-      }
-    }
-
-    async function importCsv() {
-      const file = document.getElementById('csvFile').files[0];
-      const statusEl = document.getElementById('settingsStatus');
-      if (!file) { statusEl.style.color='var(--red)'; statusEl.textContent='Select a CSV file first'; return; }
-
-      statusEl.style.color = 'var(--text-dim)';
-      statusEl.textContent = 'Importing…';
-
-      try {
-        const text = await file.text();
-        const res = await fetch('/api/members/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/csv' },
-          body: text,
-        });
-        if (res.status === 401) { window.location.href = '/login'; return; }
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent = `Imported ${data.upserted} members`;
-        renderMembersList(data.members);
-        refresh();
-      } catch (err) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = 'Import failed: ' + err.message;
-      }
-    }
-
-    function renderMembersList(members) {
-      const el = document.getElementById('membersList');
-      el.style.display = '';
-      document.getElementById('membersCount').textContent = `— ${members.length} members`;
-      const tierColor = t => t?.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)';
-      document.getElementById('membersTableBody').innerHTML = members.map(m => `
-        <tr>
-          <td style="padding:4px 8px">${escHtml(m.name || '—')}</td>
-          <td style="padding:4px 8px;color:var(--text-dim)">${escHtml(m.email)}</td>
-          <td style="padding:4px 8px;color:${tierColor(m.seat_tier)}">${m.seat_tier || '—'}</td>
-        </tr>`).join('');
-    }
-
     // ── Init ───────────────────────────────────────────────────────
     // Default date range: last 30 days
     const now = new Date();

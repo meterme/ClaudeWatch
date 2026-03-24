@@ -2,43 +2,72 @@ const crypto = require("crypto");
 const { getDb, persist } = require("./db");
 
 // ── Config ──────────────────────────────────────────────────────────────────
-const AUTH_USER = process.env.AUTH_USER || "admin";
 const AUTH_DISABLED = process.env.AUTH_DISABLED === "1";
 const SESSION_SECRET =
   process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-let authPass = process.env.AUTH_PASS || null;
-
 function isAuthEnabled() {
-  return !AUTH_DISABLED && authPass !== null;
+  return !AUTH_DISABLED;
 }
 
-// Called at startup to ensure a password exists.
-// If AUTH_PASS env is set, use it. Otherwise load/generate one in the DB.
+// ── Password hashing ────────────────────────────────────────────────────────
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return salt + ":" + hash;
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
+  const derived = crypto.scryptSync(password, salt, 64).toString("hex");
+  return derived.length === hash.length &&
+    crypto.timingSafeEqual(Buffer.from(derived), Buffer.from(hash));
+}
+
+// ── Init: ensure at least one admin user exists ─────────────────────────────
 async function initAuth() {
   if (AUTH_DISABLED) return;
-  if (authPass) return; // set via env
 
   const db = await getDb();
-  const stmt = db.prepare("SELECT value FROM config WHERE key = ?");
-  stmt.bind(["auth_pass"]);
-  if (stmt.step()) {
-    authPass = stmt.getAsObject().value;
-    stmt.free();
-    return;
-  }
+
+  // Check if any dashboard users exist
+  const stmt = db.prepare("SELECT COUNT(*) AS v FROM dashboard_users");
+  stmt.step();
+  const count = stmt.getAsObject().v;
   stmt.free();
 
-  // First run — generate and persist a random password
-  authPass = crypto.randomBytes(16).toString("hex");
-  db.run("INSERT INTO config (key, value) VALUES (?, ?)", [
-    "auth_pass",
-    authPass,
-  ]);
+  if (count > 0) return; // users already exist
+
+  // Migrate from legacy single-user auth or create default admin
+  const username = process.env.AUTH_USER || "admin";
+  let password = process.env.AUTH_PASS || null;
+
+  if (!password) {
+    // Check for legacy DB-stored password
+    const legacyStmt = db.prepare("SELECT value FROM config WHERE key = ?");
+    legacyStmt.bind(["auth_pass"]);
+    if (legacyStmt.step()) {
+      password = legacyStmt.getAsObject().value;
+    }
+    legacyStmt.free();
+  }
+
+  if (!password) {
+    // First run — generate a random password
+    password = crypto.randomBytes(16).toString("hex");
+    console.log(`\n[auth] Generated password for "${username}": ${password}`);
+    console.log("[auth] Set AUTH_PASS env to use your own, or AUTH_DISABLED=1 to disable.\n");
+  }
+
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO dashboard_users (username, password_hash, role, created_at, updated_at)
+     VALUES (?, ?, 'admin', ?, ?)`,
+    [username, hashPassword(password), now, now]
+  );
   persist();
-  console.log(`\n[auth] Generated password for user "${AUTH_USER}": ${authPass}`);
-  console.log("[auth] Set AUTH_PASS env to use your own, or AUTH_DISABLED=1 to disable.\n");
 }
 
 // ── Session store (database-backed) ─────────────────────────────────────────
@@ -130,7 +159,10 @@ function authMiddleware(req, res, next) {
   }
 
   validateSession(token).then((session) => {
-    if (session) return next();
+    if (session) {
+      req.dashboardUser = session.user;
+      return next();
+    }
     if (req.path.startsWith("/api/")) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -145,14 +177,17 @@ async function loginHandler(req, res) {
     return res.status(400).json({ error: "Missing credentials" });
   }
 
-  const userOk =
-    username.length === AUTH_USER.length &&
-    crypto.timingSafeEqual(Buffer.from(username), Buffer.from(AUTH_USER));
-  const passOk =
-    password.length === authPass.length &&
-    crypto.timingSafeEqual(Buffer.from(password), Buffer.from(authPass));
+  const db = await getDb();
+  const stmt = db.prepare("SELECT username, password_hash FROM dashboard_users WHERE username = ?");
+  stmt.bind([username]);
+  if (!stmt.step()) {
+    stmt.free();
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  const row = stmt.getAsObject();
+  stmt.free();
 
-  if (!userOk || !passOk) {
+  if (!verifyPassword(password, row.password_hash)) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
@@ -179,6 +214,60 @@ async function authCheckHandler(req, res) {
   const token = unsignCookie(cookies.session_token);
   const session = token ? await validateSession(token) : null;
   res.json({ authenticated: !!session, authEnabled: true });
+}
+
+// ── Dashboard user CRUD ─────────────────────────────────────────────────────
+async function listDashboardUsers() {
+  const db = await getDb();
+  const stmt = db.prepare("SELECT id, username, role, created_at, updated_at FROM dashboard_users ORDER BY username");
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+
+async function createDashboardUser(username, password, role = "viewer") {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO dashboard_users (username, password_hash, role, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [username, hashPassword(password), role, now, now]
+  );
+  persist();
+}
+
+async function updateDashboardUser(id, { username, password, role }) {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  if (password) {
+    db.run(
+      `UPDATE dashboard_users SET username=?, password_hash=?, role=?, updated_at=? WHERE id=?`,
+      [username, hashPassword(password), role, now, id]
+    );
+  } else {
+    db.run(
+      `UPDATE dashboard_users SET username=?, role=?, updated_at=? WHERE id=?`,
+      [username, role, now, id]
+    );
+  }
+  persist();
+}
+
+async function deleteDashboardUser(id) {
+  const db = await getDb();
+  // Prevent deleting the last admin
+  const stmt = db.prepare("SELECT COUNT(*) AS v FROM dashboard_users WHERE role = 'admin' AND id != ?");
+  stmt.bind([id]);
+  stmt.step();
+  const remaining = stmt.getAsObject().v;
+  stmt.free();
+  if (remaining === 0) {
+    throw new Error("Cannot delete the last admin user");
+  }
+  db.run("DELETE FROM dashboard_users WHERE id = ?", [id]);
+  persist();
 }
 
 // ── Login page (inline HTML) ────────────────────────────────────────────────
@@ -341,4 +430,10 @@ module.exports = {
   logoutHandler,
   authCheckHandler,
   loginPageHandler,
+  hashPassword,
+  verifyPassword,
+  listDashboardUsers,
+  createDashboardUser,
+  updateDashboardUser,
+  deleteDashboardUser,
 };

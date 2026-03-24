@@ -7,6 +7,12 @@ const {
   fetchUsageReport,
   fetchClaudeCodeRange,
 } = require("./admin-api");
+const {
+  listDashboardUsers,
+  createDashboardUser,
+  updateDashboardUser,
+  deleteDashboardUser,
+} = require("./auth");
 
 const router = express.Router();
 
@@ -550,6 +556,58 @@ router.get("/admin/per-user-cost", async (req, res) => {
   } catch (err) {
     console.error("[admin] per-user-cost error:", err.message);
     res.json({ available: false, error: err.message });
+  }
+});
+
+// ── Dashboard user management ───────────────────────────────────────────────
+router.get("/dashboard-users", async (req, res) => {
+  const users = await listDashboardUsers();
+  res.json(users);
+});
+
+router.post("/dashboard-users", async (req, res) => {
+  const { username, password, role } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password required" });
+  }
+  if (role && !["admin", "viewer"].includes(role)) {
+    return res.status(400).json({ error: "Role must be admin or viewer" });
+  }
+  try {
+    await createDashboardUser(username, password, role || "viewer");
+    const users = await listDashboardUsers();
+    res.json({ ok: true, users });
+  } catch (err) {
+    const msg = err.message.includes("UNIQUE") ? "Username already exists" : err.message;
+    res.status(400).json({ error: msg });
+  }
+});
+
+router.put("/dashboard-users/:id", async (req, res) => {
+  const { username, password, role } = req.body || {};
+  if (!username) {
+    return res.status(400).json({ error: "Username required" });
+  }
+  if (role && !["admin", "viewer"].includes(role)) {
+    return res.status(400).json({ error: "Role must be admin or viewer" });
+  }
+  try {
+    await updateDashboardUser(parseInt(req.params.id), { username, password, role: role || "viewer" });
+    const users = await listDashboardUsers();
+    res.json({ ok: true, users });
+  } catch (err) {
+    const msg = err.message.includes("UNIQUE") ? "Username already exists" : err.message;
+    res.status(400).json({ error: msg });
+  }
+});
+
+router.delete("/dashboard-users/:id", async (req, res) => {
+  try {
+    await deleteDashboardUser(parseInt(req.params.id));
+    const users = await listDashboardUsers();
+    res.json({ ok: true, users });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

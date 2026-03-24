@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings — ClaudeWatch</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242736;
+      --border: #2e3142;
+      --text: #e1e4ed;
+      --text-dim: #8b8fa3;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f59e0b;
+      --cyan: #06b6d4;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    header h1 a {
+      color: var(--text);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    header h1 a:hover { color: var(--accent2); }
+
+    .header-right {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .header-right button {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .header-right button:hover { background: var(--border); }
+
+    main {
+      padding: 20px 24px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* ── Tabs ─────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-dim);
+      background: none;
+      border: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active {
+      color: var(--accent2);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Form elements ────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group:last-child { margin-bottom: 0; }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .form-group input, .form-group select {
+      display: block;
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .btn:hover { background: var(--accent2); }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    .btn-danger {
+      background: var(--red);
+    }
+    .btn-danger:hover { background: #dc2626; }
+
+    .btn-secondary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover { background: var(--border); }
+
+    .status-msg {
+      font-size: 13px;
+      min-height: 20px;
+      margin-top: 12px;
+    }
+    .status-msg.ok { color: var(--green); }
+    .status-msg.err { color: var(--red); }
+
+    /* ── Table ─────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-dim);
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:hover td { background: var(--surface2); }
+
+    .actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    /* ── CSV area ──────────────────────────────────────────────── */
+    .csv-area {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .csv-area input[type="file"] {
+      flex: 1;
+      padding: 6px;
+    }
+
+    .csv-hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 6px;
+    }
+
+    /* ── User form inline ─────────────────────────────────────── */
+    .user-form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 120px auto;
+      gap: 8px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    .user-form-row input, .user-form-row select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .role-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .role-admin { background: #6366f133; color: var(--accent2); }
+    .role-viewer { background: #06b6d433; color: var(--cyan); }
+
+    @media (max-width: 600px) {
+      .form-row { grid-template-columns: 1fr; }
+      .user-form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <a href="/">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+        ClaudeWatch
+      </a>
+      <span style="color:var(--text-dim);font-weight:400;font-size:14px">/ Settings</span>
+    </h1>
+    <div class="header-right">
+      <button onclick="window.location.href='/'">Back to Dashboard</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-tab="plan">Plan</button>
+      <button class="tab" data-tab="users">Dashboard Users</button>
+    </div>
+
+    <!-- ═══════════════════ PLAN TAB ═══════════════════ -->
+    <div class="tab-content active" id="tab-plan">
+      <div class="card">
+        <h2>Billing Configuration</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Billing Cycle Day (1-28)</label>
+            <input type="number" id="setBillingDay" value="1" min="1" max="28">
+          </div>
+          <div class="form-group">
+            <label>Standard Seat Cost ($/mo)</label>
+            <input type="number" id="setStandardCost" value="20" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Premium Seat Cost ($/mo)</label>
+            <input type="number" id="setPremiumCost" value="100" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label>Anthropic Admin API Key</label>
+            <input type="password" id="setAdminApiKey" placeholder="sk-ant-admin-...">
+          </div>
+        </div>
+        <button class="btn" onclick="savePlanConfig()">Save Configuration</button>
+        <div class="status-msg" id="planStatus"></div>
+      </div>
+
+      <div class="card">
+        <h2>Team Members (Org Import)</h2>
+        <div class="form-group">
+          <label>Import CSV</label>
+          <div class="csv-area">
+            <input type="file" id="csvFile" accept=".csv">
+            <button class="btn btn-sm" onclick="importCsv()">Import</button>
+          </div>
+          <div class="csv-hint">Expected columns: Name, Email, Role, Status, Seat Tier</div>
+        </div>
+        <div class="status-msg" id="csvStatus"></div>
+      </div>
+
+      <div class="card" id="membersCard" style="display:none">
+        <h2>Imported Members <span id="membersCount" style="font-weight:normal;text-transform:none;letter-spacing:0"></span></h2>
+        <div style="max-height:400px;overflow-y:auto">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Tier</th><th>Status</th></tr>
+            </thead>
+            <tbody id="membersBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════ USERS TAB ═══════════════════ -->
+    <div class="tab-content" id="tab-users">
+      <div class="card">
+        <h2>Add Dashboard User</h2>
+        <div class="user-form-row">
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">USERNAME</label>
+            <input type="text" id="newUsername" placeholder="username">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">PASSWORD</label>
+            <input type="password" id="newPassword" placeholder="password">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">ROLE</label>
+            <select id="newRole">
+              <option value="viewer">Viewer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button class="btn btn-sm" style="margin-bottom:1px" onclick="addUser()">Add</button>
+        </div>
+        <div class="status-msg" id="userAddStatus"></div>
+      </div>
+
+      <div class="card">
+        <h2>Dashboard Users</h2>
+        <table>
+          <thead>
+            <tr><th>Username</th><th>Role</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══════════════════ EDIT USER MODAL ═══════════════════ -->
+  <div id="editModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px)">
+    <div style="display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px">
+      <div class="card" style="width:100%;max-width:420px;margin:0">
+        <h2>Edit User</h2>
+        <input type="hidden" id="editId">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="editUsername">
+        </div>
+        <div class="form-group">
+          <label>New Password (leave blank to keep)</label>
+          <input type="password" id="editPassword" placeholder="unchanged">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="editRole">
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button class="btn" onclick="saveEdit()">Save</button>
+          <button class="btn btn-secondary" onclick="closeEdit()">Cancel</button>
+        </div>
+        <div class="status-msg" id="editStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Tabs ─────────────────────────────────────────────────
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ── Helpers ──────────────────────────────────────────────
+    async function api(path, opts) {
+      const res = await fetch('/api' + path, opts);
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      return res.json();
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function showStatus(id, msg, ok) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.className = 'status-msg ' + (ok ? 'ok' : 'err');
+    }
+
+    // ── Plan config ─────────────────────────────────────────
+    async function loadPlanConfig() {
+      const data = await api('/plan-config');
+      if (data?.plan) {
+        document.getElementById('setBillingDay').value = data.plan.billing_cycle_day || 1;
+        document.getElementById('setStandardCost').value = data.plan.standard_seat_cost_usd || 20;
+        document.getElementById('setPremiumCost').value = data.plan.premium_seat_cost_usd || 100;
+      }
+      document.getElementById('setAdminApiKey').value = '';
+      document.getElementById('setAdminApiKey').placeholder =
+        data?.hasAdminApiKey ? 'sk-ant-admin-******* (configured)' : 'sk-ant-admin-...';
+      if (data?.members?.length) renderMembers(data.members);
+    }
+
+    async function savePlanConfig() {
+      const body = {
+        billing_cycle_day: parseInt(document.getElementById('setBillingDay').value) || 1,
+        standard_seat_cost_usd: parseFloat(document.getElementById('setStandardCost').value) || 20,
+        premium_seat_cost_usd: parseFloat(document.getElementById('setPremiumCost').value) || 100,
+      };
+      const apiKey = document.getElementById('setAdminApiKey').value.trim();
+      if (apiKey) body.admin_api_key = apiKey;
+
+      try {
+        await fetch('/api/plan-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        showStatus('planStatus', 'Settings saved!', true);
+        loadPlanConfig();
+      } catch (err) {
+        showStatus('planStatus', 'Error saving settings', false);
+      }
+    }
+
+    async function importCsv() {
+      const file = document.getElementById('csvFile').files[0];
+      if (!file) { showStatus('csvStatus', 'Select a CSV file first', false); return; }
+
+      showStatus('csvStatus', 'Importing...', true);
+      try {
+        const text = await file.text();
+        const res = await fetch('/api/members/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/csv' },
+          body: text,
+        });
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        showStatus('csvStatus', `Imported ${data.upserted} members`, true);
+        renderMembers(data.members);
+      } catch (err) {
+        showStatus('csvStatus', 'Import failed: ' + err.message, false);
+      }
+    }
+
+    function renderMembers(members) {
+      document.getElementById('membersCard').style.display = '';
+      document.getElementById('membersCount').textContent = `(${members.length})`;
+      const tierColor = t => t?.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)';
+      document.getElementById('membersBody').innerHTML = members.map(m => `
+        <tr>
+          <td>${escHtml(m.name || '—')}</td>
+          <td style="color:var(--text-dim)">${escHtml(m.email)}</td>
+          <td style="color:${tierColor(m.seat_tier)}">${m.seat_tier || '—'}</td>
+          <td>${m.status || '—'}</td>
+        </tr>`).join('');
+    }
+
+    // ── Dashboard users ─────────────────────────────────────
+    async function loadUsers() {
+      const users = await api('/dashboard-users');
+      renderUsers(users);
+    }
+
+    function renderUsers(users) {
+      document.getElementById('usersBody').innerHTML = users.map(u => {
+        const roleCls = u.role === 'admin' ? 'role-admin' : 'role-viewer';
+        const created = new Date(u.created_at).toLocaleDateString();
+        return `<tr>
+          <td><strong>${escHtml(u.username)}</strong></td>
+          <td><span class="role-badge ${roleCls}">${u.role}</span></td>
+          <td style="color:var(--text-dim)">${created}</td>
+          <td class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="openEdit(${u.id}, '${escHtml(u.username)}', '${u.role}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id}, '${escHtml(u.username)}')">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function addUser() {
+      const username = document.getElementById('newUsername').value.trim();
+      const password = document.getElementById('newPassword').value;
+      const role = document.getElementById('newRole').value;
+
+      if (!username || !password) {
+        showStatus('userAddStatus', 'Username and password required', false);
+        return;
+      }
+
+      const data = await api('/dashboard-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, role }),
+      });
+
+      if (data?.error) {
+        showStatus('userAddStatus', data.error, false);
+      } else {
+        showStatus('userAddStatus', `User "${username}" created`, true);
+        document.getElementById('newUsername').value = '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('newRole').value = 'viewer';
+        renderUsers(data.users);
+      }
+    }
+
+    function openEdit(id, username, role) {
+      document.getElementById('editId').value = id;
+      document.getElementById('editUsername').value = username;
+      document.getElementById('editPassword').value = '';
+      document.getElementById('editRole').value = role;
+      document.getElementById('editStatus').textContent = '';
+      document.getElementById('editModal').style.display = '';
+    }
+
+    function closeEdit() {
+      document.getElementById('editModal').style.display = 'none';
+    }
+
+    async function saveEdit() {
+      const id = document.getElementById('editId').value;
+      const body = {
+        username: document.getElementById('editUsername').value.trim(),
+        role: document.getElementById('editRole').value,
+      };
+      const pw = document.getElementById('editPassword').value;
+      if (pw) body.password = pw;
+
+      const data = await api('/dashboard-users/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (data?.error) {
+        showStatus('editStatus', data.error, false);
+      } else {
+        closeEdit();
+        renderUsers(data.users);
+      }
+    }
+
+    async function deleteUser(id, username) {
+      if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+
+      const data = await api('/dashboard-users/' + id, { method: 'DELETE' });
+      if (data?.error) {
+        alert(data.error);
+      } else {
+        renderUsers(data.users);
+      }
+    }
+
+    // Close edit modal on Escape or backdrop click
+    document.getElementById('editModal').addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeEdit();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeEdit();
+    });
+
+    // ── Init ────────────────────────────────────────────────
+    loadPlanConfig();
+    loadUsers();
+  </script>
+</body>
+</html>
