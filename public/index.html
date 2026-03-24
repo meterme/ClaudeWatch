@@ -542,7 +542,7 @@
         <canvas id="chartCostTime"></canvas>
       </div>
       <div class="chart-panel">
-        <h2>Usage by Model</h2>
+        <h2>Tokens by Model</h2>
         <canvas id="chartModel"></canvas>
       </div>
       <div class="chart-panel">
@@ -561,7 +561,7 @@
         <thead>
           <tr>
             <th>User</th><th>Requests</th><th>Sessions</th>
-            <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th>
+            <th>Input Tokens</th><th>Output Tokens</th><th>Tokens (Cost)</th>
             <th>Windows</th><th>Avg/Window</th><th>Velocity</th>
           </tr>
         </thead>
@@ -575,7 +575,7 @@
         <thead>
           <tr>
             <th>Started</th><th>User</th><th>Prompts</th>
-            <th>Input Tokens</th><th>Output Tokens</th><th>Cost</th><th>Duration</th>
+            <th>Input Tokens</th><th>Output Tokens</th><th>Tokens (Cost)</th><th>Duration</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -691,6 +691,13 @@
 
     function fmt(n) { return n == null ? '—' : n.toLocaleString(); }
     function fmtCost(n) { return n == null ? '—' : '$' + n.toFixed(2); }
+    function fmtTokens(n) {
+      if (n == null) return '—';
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return n.toLocaleString();
+    }
 
     function destroyChart(id) {
       if (charts[id]) { charts[id].destroy(); delete charts[id]; }
@@ -736,8 +743,9 @@
     }
 
     function renderKPIs(s) {
+      const totalTokens = (s.totalTokensIn || 0) + (s.totalTokensOut || 0);
       document.getElementById('kpis').innerHTML = `
-        <div class="kpi"><div class="label">Total Cost</div><div class="value cost">${fmtCost(s.totalCost)}</div></div>
+        <div class="kpi"><div class="label">Total Tokens</div><div class="value cost">${fmtTokens(totalTokens)} <span style="font-size:14px;font-weight:500;color:var(--text-dim)">(${fmtCost(s.totalCost)})</span></div></div>
         <div class="kpi"><div class="label">API Requests</div><div class="value">${fmt(s.totalRequests)}</div></div>
         <div class="kpi"><div class="label">Prompts</div><div class="value">${fmt(s.totalPrompts)}</div></div>
         <div class="kpi"><div class="label">Input Tokens</div><div class="value">${fmt(s.totalTokensIn)}</div></div>
@@ -765,16 +773,19 @@
       const projColor = overage.projected_end_of_period > overage.base_plan_cost
         ? 'var(--orange)' : 'var(--text-dim)';
 
+      // Sum total tokens from overage by-user data
+      const totalOverageTokens = (overage.by_user || []).reduce((s, u) => s + (u.tokens || 0), 0);
+
       el.innerHTML = `<div class="plan-overview">
         <div class="plan-kpi">
           <div class="label">Monthly Overage</div>
           <div class="value" style="color:${overageColor}">${fmtCost(overage.overage)}</div>
-          <div class="sub">Base: ${fmtCost(overage.base_plan_cost)} | Spend: ${fmtCost(overage.total_cost)} (${pct}%)</div>
+          <div class="sub">Base: ${fmtCost(overage.base_plan_cost)} | Spend: ${fmtTokens(totalOverageTokens)} tokens (${fmtCost(overage.total_cost)}) — ${pct}%</div>
           <div class="sub">${overage.billing_period.daysRemaining}d remaining</div>
         </div>
         <div class="plan-kpi">
-          <div class="label">Avg Session Cost</div>
-          <div class="value" style="color:var(--cyan)">${s.avg_cost_per_window != null ? fmtCost(s.avg_cost_per_window) : '—'}</div>
+          <div class="label">Avg Session Tokens</div>
+          <div class="value" style="color:var(--cyan)">${s.avg_tokens_per_window != null ? fmtTokens(s.avg_tokens_per_window) : '—'} <span style="font-size:14px;font-weight:500;color:var(--text-dim)">(${s.avg_cost_per_window != null ? fmtCost(s.avg_cost_per_window) : '—'})</span></div>
           <div class="sub">${fmt(s.total_windows)} windows detected | ${fmt(s.avg_requests_per_window)} req/window</div>
         </div>
         <div class="plan-kpi">
@@ -847,12 +858,14 @@
     function renderModelChart(data) {
       destroyChart('model');
       const colors = ['#6366f1', '#06b6d4', '#22c55e', '#f59e0b', '#ef4444', '#a855f7'];
+      // Store cost alongside token data for tooltip display
+      const modelCosts = data.map(d => d.cost);
       charts.model = new Chart(document.getElementById('chartModel'), {
         type: 'doughnut',
         data: {
           labels: data.map(d => d.model || 'unknown'),
           datasets: [{
-            data: data.map(d => d.cost),
+            data: data.map(d => (d.input_tokens || 0) + (d.output_tokens || 0)),
             backgroundColor: colors.slice(0, data.length),
             borderWidth: 0,
           }],
@@ -861,7 +874,7 @@
           responsive: true,
           plugins: {
             legend: { position: 'bottom', labels: { padding: 12 } },
-            tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtCost(ctx.raw)}` } },
+            tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtTokens(ctx.raw)} tokens (${fmtCost(modelCosts[ctx.dataIndex])})` } },
           },
         },
       });
@@ -961,13 +974,14 @@
         const windows = ws ? ws.count : 0;
         const avgPerWindow = ws && ws.count > 0 ? ws.totalCost / ws.count : null;
         const velocity = ws && ws.totalHours > 0 ? ws.totalCost / ws.totalHours : null;
+        const userTokens = (u.input_tokens || 0) + (u.output_tokens || 0);
         return `<tr>
           <td>${u.user_email || '—'}</td>
           <td>${fmt(u.requests)}</td>
           <td>${fmt(u.sessions)}</td>
           <td>${fmt(u.input_tokens)}</td>
           <td>${fmt(u.output_tokens)}</td>
-          <td style="color:var(--green)">${fmtCost(u.cost)}</td>
+          <td style="color:var(--green)">${fmtTokens(userTokens)} <span style="color:var(--text-dim)">(${fmtCost(u.cost)})</span></td>
           <td>${windows}</td>
           <td>${avgPerWindow != null ? fmtCost(avgPerWindow) : '—'}</td>
           <td>${velocity != null ? fmtCost(velocity) + '/hr' : '—'}</td>
@@ -986,7 +1000,7 @@
           <td><span class="tag ${cls}">${e.type}</span></td>
           <td>${e.user_email || '—'}</td>
           <td>${e.model || '—'}</td>
-          <td>${e.type === 'api_request' ? fmtCost(e.cost_usd) : fmt(e.cost_usd)}</td>
+          <td>${e.type === 'api_request' ? fmtCost(e.cost_usd) + ' on-demand' : fmt(e.cost_usd)}</td>
         </tr>`;
       }).join('');
     }
@@ -999,13 +1013,14 @@
         const dur = s.ended && s.started
           ? Math.round((new Date(s.ended) - new Date(s.started)) / 60000) + 'm'
           : '—';
+        const sessTokens = (s.input_tokens || 0) + (s.output_tokens || 0);
         return `<tr class="session-row" onclick="openConversation('${s.session_id}')">
           <td style="white-space:nowrap">${started}</td>
           <td>${s.user_email || '—'}</td>
           <td>${fmt(s.requests)}</td>
           <td>${fmt(s.input_tokens)}</td>
           <td>${fmt(s.output_tokens)}</td>
-          <td style="color:var(--green)">${fmtCost(s.cost)}</td>
+          <td style="color:var(--green)">${fmtTokens(sessTokens)} <span style="color:var(--text-dim)">(${fmtCost(s.cost)})</span></td>
           <td>${dur}</td>
         </tr>`;
       }).join('');
@@ -1057,7 +1072,7 @@
           <div class="turn-meta">
             <span>${turn.model || '—'}</span>
             <span>${fmt(turn.input_tokens)} in / ${fmt(turn.output_tokens)} out</span>
-            <span>${fmtCost(turn.cost_usd)}</span>
+            <span>${fmtTokens((turn.input_tokens || 0) + (turn.output_tokens || 0))} tokens (${fmtCost(turn.cost_usd)})</span>
             ${turn.duration_ms ? '<span>' + (turn.duration_ms / 1000).toFixed(1) + 's</span>' : ''}
           </div>
         </div>`;
