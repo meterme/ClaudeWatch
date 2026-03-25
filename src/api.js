@@ -94,6 +94,27 @@ router.get("/stats/by-user", async (req, res) => {
      FROM api_requests ${wc.sql}
      GROUP BY user_email
      ORDER BY cost DESC`, wc.params);
+
+  // Determine top model per user (most tokens in the same window)
+  const modelRows = query(db,
+    `SELECT user_email, model,
+            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens
+     FROM api_requests ${wc.sql}
+     GROUP BY user_email, model
+     ORDER BY user_email, total_tokens DESC`, wc.params);
+
+  const topModelByUser = {};
+  for (const r of modelRows) {
+    if (!topModelByUser[r.user_email]) {
+      topModelByUser[r.user_email] = { model: r.model, tokens: r.total_tokens };
+    }
+  }
+  for (const r of rows) {
+    const tm = topModelByUser[r.user_email];
+    r.top_model = tm?.model || null;
+    r.top_model_tokens = tm?.tokens || 0;
+  }
+
   res.json(rows);
 });
 

@@ -458,8 +458,8 @@
         <thead>
           <tr>
             <th>User</th><th>Tier</th><th>Requests</th>
-            <th>Tokens</th><th>Plan Cost</th><th>Token Value</th><th>Anthropic Cost</th><th>Value Ratio</th>
-            <th>Windows</th><th>Avg/Window</th><th>Velocity</th>
+            <th>Tokens</th><th>Top Model</th><th>Token Value</th><th>Cost</th><th>Value Ratio</th>
+            <th>Windows</th><th>Velocity</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -784,7 +784,7 @@
         }
       }
 
-      // Build per-user billing info (seat tier + api-equivalent cost for the billing period)
+      // Build per-user billing info (seat tier)
       const billingByUser = {};
       if (billing?.by_user) {
         for (const bu of billing.by_user) {
@@ -793,53 +793,58 @@
       }
       const seatCosts = billing?.seat_costs || { standard: 20, premium: 100 };
 
-      // Build per-user Anthropic-reported cost from Admin API
-      const adminByUser = {};
-      if (adminCost?.available && adminCost.users) {
-        for (const au of adminCost.users) {
-          adminByUser[au.email.toLowerCase()] = au;
-        }
+      // Compute number of days in the selected filter window
+      const fromVal = document.getElementById('filterFrom').value;
+      const toVal   = document.getElementById('filterTo').value;
+      let windowDays = 30;
+      if (fromVal && toVal) {
+        windowDays = Math.max(1, Math.round((new Date(toVal) - new Date(fromVal)) / 86400000) + 1);
+      } else if (fromVal) {
+        windowDays = Math.max(1, Math.round((new Date() - new Date(fromVal)) / 86400000) + 1);
       }
 
       const tbody = document.querySelector('#userTable tbody');
       tbody.innerHTML = data.map(u => {
         const ws = userWindowStats[u.user_email];
         const windows = ws ? ws.count : 0;
-        const avgPerWindow = ws && ws.count > 0 ? ws.totalCost / ws.count : null;
         const velocity = ws && ws.totalHours > 0 ? ws.totalCost / ws.totalHours : null;
         const userTokens = (u.input_tokens || 0) + (u.output_tokens || 0);
 
-        // Billing period data for this user
+        // Seat tier
         const bu = billingByUser[u.user_email];
         const tier = bu?.seat_tier || 'Standard';
-        const planCost = tier.toLowerCase() === 'premium' ? seatCosts.premium : seatCosts.standard;
-        const tokenValue = bu?.api_equivalent_cost || u.cost || 0;
+        const planCostPerMonth = tier.toLowerCase() === 'premium' ? seatCosts.premium : seatCosts.standard;
 
-        // Anthropic-reported cost (from Claude Code Analytics API)
-        const au = adminByUser[(u.user_email || '').toLowerCase()];
-        const anthropicCost = au ? au.anthropic_cost : null;
+        // Token value: api-equivalent cost for the selected window (from by-user query)
+        const tokenValue = u.cost || 0;
 
-        // Value ratio: token value / plan cost. >1x means plan is a good deal
-        const ratio = planCost > 0 ? tokenValue / planCost : null;
+        // Cost column: prorated subscription for the window + overage if usage exceeded it
+        const proratedPlan = planCostPerMonth * windowDays / 30;
+        const overage = Math.max(0, tokenValue - proratedPlan);
+        const totalCost = proratedPlan + overage;
+        let costCell;
+        if (overage > 0) {
+          costCell = `<span style="color:var(--cyan)">${fmtCost(proratedPlan)}</span>`
+            + ` <span style="color:var(--red);font-size:11px">+${fmtCost(overage)}</span>`;
+        } else {
+          costCell = `<span style="color:var(--cyan)">${fmtCost(totalCost)}</span>`;
+        }
+
+        // Value ratio: token value / prorated plan cost
+        const ratio = proratedPlan > 0 ? tokenValue / proratedPlan : null;
         let ratioColor = 'var(--text-dim)';
         let ratioLabel = '—';
         if (ratio != null) {
           ratioLabel = ratio.toFixed(1) + 'x';
-          if (ratio >= 2) ratioColor = 'var(--green)';       // great value
-          else if (ratio >= 1) ratioColor = 'var(--cyan)';    // good value
-          else ratioColor = 'var(--red)';                     // per-token would be cheaper
+          if (ratio >= 2) ratioColor = 'var(--green)';
+          else if (ratio >= 1) ratioColor = 'var(--cyan)';
+          else ratioColor = 'var(--red)';
         }
 
-        // Anthropic cost cell: show cost, flag if it exceeds plan (overage)
-        let anthropicCell;
-        if (anthropicCost == null) {
-          anthropicCell = `<span style="color:var(--text-dim)">—</span>`;
-        } else {
-          const isOverage = anthropicCost > planCost;
-          const color = isOverage ? 'var(--red)' : 'var(--green)';
-          const overageAmt = isOverage ? anthropicCost - planCost : 0;
-          anthropicCell = `<span style="color:${color}">${fmtCost(anthropicCost)}</span>`
-            + (isOverage ? ` <span style="color:var(--red);font-size:11px">(+${fmtCost(overageAmt)})</span>` : '');
+        // Top model cell
+        let topModelCell = '<span style="color:var(--text-dim)">—</span>';
+        if (u.top_model) {
+          topModelCell = `<span style="color:var(--text-dim);font-size:12px">${u.top_model} <span style="color:var(--text-dim);opacity:0.7">(${fmtTokens(u.top_model_tokens)} tok)</span></span>`;
         }
 
         return `<tr>
@@ -847,12 +852,11 @@
           <td><span style="color:${tier.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)'}">${tier}</span></td>
           <td>${fmt(u.requests)}</td>
           <td>${fmtTokens(userTokens)}</td>
-          <td>${fmtCost(planCost)}/mo</td>
+          <td>${topModelCell}</td>
           <td style="color:var(--green)">${fmtCost(tokenValue)}</td>
-          <td>${anthropicCell}</td>
+          <td>${costCell}</td>
           <td style="color:${ratioColor};font-weight:600">${ratioLabel}</td>
           <td>${windows}</td>
-          <td>${avgPerWindow != null ? fmtCost(avgPerWindow) : '—'}</td>
           <td>${velocity != null ? fmtCost(velocity) + '/hr' : '—'}</td>
         </tr>`;
       }).join('');

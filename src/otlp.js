@@ -148,8 +148,8 @@ function insertEvent(db, eventName, ts, a) {
           common.user_email,
           common.user_id,
           common.org_id,
-          toInt(a["prompt.length"]),
-          a["prompt.content"] || null,
+          toInt(a["prompt.length"] ?? a["prompt_length"]),
+          a["prompt"] || a["prompt.content"] || null,
         ]
       );
       return 1;
