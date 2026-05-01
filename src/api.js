@@ -612,6 +612,12 @@ router.get("/admin/per-user-cost", async (req, res) => {
   }
 });
 
+// ── Ingest token status (read-only; configured via INGEST_TOKEN env) ────────
+router.get("/ingest-token", (req, res) => {
+  const value = process.env.INGEST_TOKEN || null;
+  res.json({ set: !!value, value });
+});
+
 // ── Dashboard user management ───────────────────────────────────────────────
 router.get("/dashboard-users", async (req, res) => {
   const users = await listDashboardUsers();

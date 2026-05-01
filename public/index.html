@@ -81,6 +81,22 @@
 
     main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
 
+    .ingest-dot {
+      display: none;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .ingest-dot.ok {
+      background: var(--green);
+      box-shadow: 0 0 6px #22c55eaa;
+    }
+    .ingest-dot.warn {
+      background: var(--red);
+      box-shadow: 0 0 6px #ef4444aa;
+    }
+
     /* ── KPI cards ─────────────────────────────────────────────────── */
     .kpi-grid {
       display: grid;
@@ -456,6 +472,7 @@
       <a class="gear-btn" href="/settings.html" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
       </a>
+      <span class="ingest-dot" id="ingestDot"></span>
       <button id="logoutBtn" style="display:none;background:var(--surface2);border:1px solid var(--border)" onclick="logout()">Logout</button>
     </div>
   </header>
@@ -1038,6 +1055,20 @@
     fetch('/auth/check').then(r => r.json()).then(d => {
       if (d.authEnabled) document.getElementById('logoutBtn').style.display = '';
     });
+
+    // Ingest token status dot
+    fetch('/api/ingest-token').then(r => r.json()).then(d => {
+      const el = document.getElementById('ingestDot');
+      if (!el) return;
+      if (d.set) {
+        el.className = 'ingest-dot ok';
+        el.title = 'INGEST TOKEN SET';
+      } else {
+        el.className = 'ingest-dot warn';
+        el.title = 'NO INGEST TOKEN, SUBMISSION IS PUBLIC';
+      }
+      el.style.display = 'inline-block';
+    }).catch(() => {});
 
     async function logout() {
       await fetch('/auth/logout', { method: 'POST' });
