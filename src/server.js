@@ -13,6 +13,7 @@ const {
   authCheckHandler,
   loginPageHandler,
 } = require("./auth");
+const { isObscureMode, ensureAliasesForAllUsers } = require("./user-mask");
 
 const app = express();
 const PORT = process.env.PORT || 3456;
@@ -93,11 +94,13 @@ async function maybeSeedDemo() {
 (async () => {
   await getDb(); // ensure DB is initialized
   await initAuth(); // ensure auth password exists
+  if (isObscureMode()) await ensureAliasesForAllUsers();
   await maybeSeedDemo();
 
   app.listen(PORT, () => {
     const auth = isAuthEnabled() ? "enabled" : "disabled (AUTH_DISABLED=1)";
     const ingestAuthState = INGEST_TOKEN ? "token required" : "open (no token)";
+    const obscure = isObscureMode() ? "enabled (OBSCURE_USERS=1)" : "disabled";
     console.log(`
 ┌──────────────────────────────────────────────────┐
 │  ClaudeWatch                                     │
@@ -105,6 +108,7 @@ async function maybeSeedDemo() {
 │  OTLP recv:  http://localhost:${PORT}/v1/logs       │
 │  Auth:       ${auth.padEnd(35)}│
 │  Ingest:     ${ingestAuthState.padEnd(35)}│
+│  Obscure:    ${obscure.padEnd(35)}│
 └──────────────────────────────────────────────────┘
     `);
   });
