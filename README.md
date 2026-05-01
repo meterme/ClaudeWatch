@@ -98,7 +98,13 @@ All `/api/stats/*` endpoints accept optional query params: `from`, `to`, `user`.
 
 ## Configuration
 
+All configuration is via environment variables. None are required — the server boots with sensible defaults and generates a random admin password on first run.
+
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `PORT` | `3456` | Server listen port |
-| `SEED_DEMO` | `0` | Set to `1` to populate demo data on first run |
+| `PORT` | `3456` | Server listen port (used for both the dashboard and the OTLP receiver). |
+| `SEED_DEMO` | `0` | Set to `1` to populate ~30 days of demo data on first run. No-op if `api_requests` already has rows. |
+| `AUTH_DISABLED` | `0` | Set to `1` to disable dashboard login entirely. The OTLP receiver at `/v1/logs` is always unauthenticated regardless of this flag. |
+| `SESSION_SECRET` | random | HMAC key used to sign session cookies. If unset, a random 32-byte secret is generated at startup, which invalidates all existing sessions on every restart — set this to a stable value in production. |
+| `AUTH_USER` | `admin` | Username for the **initial** admin account. Only read on first run when no `dashboard_users` rows exist; ignored on subsequent boots. Manage users from the admin UI after that. |
+| `AUTH_PASS` | random | Password for the **initial** admin account. Only read on first run. If unset, a random password is generated and printed to stdout — capture it from the logs or set this explicitly. |
