@@ -167,6 +167,14 @@ function migrate(db) {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_aliases (
+      email      TEXT PRIMARY KEY,
+      alias      TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // Indexes for common query patterns
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_ts ON api_requests(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user ON api_requests(user_email)`);
@@ -174,6 +182,7 @@ function migrate(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_tool_uses_ts ON tool_uses(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_prompts_ts ON user_prompts(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user_ts ON api_requests(user_email, timestamp)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_user_aliases_alias ON user_aliases(alias)`);
 
   persist();
 }
