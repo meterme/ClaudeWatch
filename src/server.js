@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const crypto = require("crypto");
 const { ingestOtlpLogs } = require("./otlp");
 const apiRouter = require("./api");
 const { getDb } = require("./db");
@@ -15,6 +16,7 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3456;
+const INGEST_TOKEN = process.env.INGEST_TOKEN || null;
 
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "10mb" }));
@@ -25,9 +27,23 @@ app.post("/auth/login", loginHandler);
 app.post("/auth/logout", logoutHandler);
 app.get("/auth/check", authCheckHandler);
 
-// ── OTLP HTTP/JSON receiver (unauthenticated) ──────────────────────────────
+// ── OTLP HTTP/JSON receiver ────────────────────────────────────────────────
 // Claude Code sends to: POST /v1/logs
-app.post("/v1/logs", async (req, res) => {
+// If INGEST_TOKEN is set, requires Authorization: Bearer <token>.
+// Clients configure this via OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>".
+function ingestAuth(req, res, next) {
+  if (!INGEST_TOKEN) return next();
+  const header = req.headers.authorization || "";
+  const m = /^Bearer\s+(.+)$/i.exec(header);
+  const presented = m ? m[1].trim() : "";
+  const a = Buffer.from(presented);
+  const b = Buffer.from(INGEST_TOKEN);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) return res.status(401).json({ error: "Unauthorized" });
+  next();
+}
+
+const ingestHandler = async (req, res) => {
   try {
     const count = await ingestOtlpLogs(req.body);
     console.log(`[otlp] ingested ${count} event(s)`);
@@ -37,17 +53,11 @@ app.post("/v1/logs", async (req, res) => {
     console.error("[otlp] ingest error:", err);
     res.status(500).json({ error: err.message });
   }
-});
+};
 
+app.post("/v1/logs", ingestAuth, ingestHandler);
 // Also accept the protobuf-style route that some exporters use
-app.post("/v1/logs/", async (req, res) => {
-  try {
-    const count = await ingestOtlpLogs(req.body);
-    res.status(200).json({});
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.post("/v1/logs/", ingestAuth, ingestHandler);
 
 // ── Auth middleware (everything below requires login) ────────────────────────
 app.use(authMiddleware);
@@ -80,12 +90,14 @@ async function maybeSeedDemo() {
 
   app.listen(PORT, () => {
     const auth = isAuthEnabled() ? "enabled" : "disabled (AUTH_DISABLED=1)";
+    const ingestAuthState = INGEST_TOKEN ? "token required" : "open (no token)";
     console.log(`
 ┌──────────────────────────────────────────────────┐
 │  ClaudeWatch                                     │
 │  Dashboard:  http://localhost:${PORT}               │
 │  OTLP recv:  http://localhost:${PORT}/v1/logs       │
 │  Auth:       ${auth.padEnd(35)}│
+│  Ingest:     ${ingestAuthState.padEnd(35)}│
 └──────────────────────────────────────────────────┘
     `);
   });
