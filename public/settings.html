@@ -325,6 +325,15 @@
       </div>
 
       <div class="card">
+        <h2>Ingest Token</h2>
+        <div class="form-group">
+          <label>INGEST_TOKEN (read-only — configured via environment variable)</label>
+          <input type="text" id="ingestTokenValue" readonly placeholder="not set">
+          <div class="csv-hint" id="ingestTokenHint">Loading…</div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Team Members (Org Import)</h2>
         <div class="form-group">
           <label>Import CSV</label>
@@ -622,9 +631,27 @@
       if (e.key === 'Escape') closeEdit();
     });
 
+    // ── Ingest token (read-only) ────────────────────────────
+    async function loadIngestToken() {
+      const data = await api('/ingest-token');
+      const input = document.getElementById('ingestTokenValue');
+      const hint = document.getElementById('ingestTokenHint');
+      if (data?.set) {
+        input.value = data.value;
+        hint.textContent = 'Authenticated ingest is required. Clients must send Authorization: Bearer <token>.';
+        hint.style.color = 'var(--green)';
+      } else {
+        input.value = '';
+        input.placeholder = 'not set';
+        hint.textContent = 'No INGEST_TOKEN set — the /v1/logs endpoint accepts unauthenticated submissions.';
+        hint.style.color = 'var(--red)';
+      }
+    }
+
     // ── Init ────────────────────────────────────────────────
     loadPlanConfig();
     loadUsers();
+    loadIngestToken();
   </script>
 </body>
 </html>

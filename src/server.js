@@ -39,7 +39,14 @@ function ingestAuth(req, res, next) {
   const a = Buffer.from(presented);
   const b = Buffer.from(INGEST_TOKEN);
   const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!ok) return res.status(401).json({ error: "Unauthorized" });
+  if (!ok) {
+    const ip = req.ip || req.socket?.remoteAddress || "?";
+    const reason = !header ? "missing Authorization header"
+      : !m ? "Authorization header is not Bearer"
+      : "token mismatch";
+    console.warn(`[otlp] rejected unauthenticated ingest from ${ip} (${reason})`);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
   next();
 }
 
