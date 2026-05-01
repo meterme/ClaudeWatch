@@ -13,13 +13,15 @@ const {
   updateDashboardUser,
   deleteDashboardUser,
 } = require("./auth");
+const { maskRows, unmaskFilter, aliasFor, isObscureMode } = require("./user-mask");
 
 const router = express.Router();
 
 // ── Summary stats ───────────────────────────────────────────────────────────
 router.get("/stats/summary", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
 
   const totalCost = scalar(db,
@@ -48,7 +50,8 @@ router.get("/stats/summary", async (req, res) => {
 // ── Cost over time (daily) ──────────────────────────────────────────────────
 router.get("/stats/cost-over-time", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
   const rows = query(db,
     `SELECT DATE(timestamp) AS day,
@@ -65,7 +68,8 @@ router.get("/stats/cost-over-time", async (req, res) => {
 // ── Usage by model ──────────────────────────────────────────────────────────
 router.get("/stats/by-model", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
   const rows = query(db,
     `SELECT model,
@@ -82,7 +86,8 @@ router.get("/stats/by-model", async (req, res) => {
 // ── Usage by user ───────────────────────────────────────────────────────────
 router.get("/stats/by-user", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
   const rows = query(db,
     `SELECT user_email,
@@ -115,13 +120,15 @@ router.get("/stats/by-user", async (req, res) => {
     r.top_model_tokens = tm?.tokens || 0;
   }
 
+  await maskRows(rows);
   res.json(rows);
 });
 
 // ── Tool usage breakdown ────────────────────────────────────────────────────
 router.get("/stats/tools", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user, "tool_uses");
   const rows = query(db,
     `SELECT tool_name,
@@ -138,7 +145,8 @@ router.get("/stats/tools", async (req, res) => {
 // ── Hourly activity heatmap ─────────────────────────────────────────────────
 router.get("/stats/hourly-activity", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
   const rows = query(db,
     `SELECT CAST(strftime('%w', timestamp) AS INTEGER) AS dow,
@@ -173,13 +181,15 @@ router.get("/events/recent", async (req, res) => {
      FROM api_errors
      ORDER BY timestamp DESC
      LIMIT ?`, [limit]);
+  await maskRows(rows);
   res.json(rows);
 });
 
 // ── Sessions list ───────────────────────────────────────────────────────────
 router.get("/sessions", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
   const rows = query(db,
     `SELECT session_id,
@@ -194,6 +204,7 @@ router.get("/sessions", async (req, res) => {
      GROUP BY session_id
      ORDER BY started DESC
      LIMIT 100`, wc.params);
+  await maskRows(rows);
   res.json(rows);
 });
 
@@ -299,7 +310,18 @@ router.get("/users", async (req, res) => {
   const db = await getDb();
   const rows = query(db,
     `SELECT DISTINCT user_email FROM api_requests WHERE user_email IS NOT NULL ORDER BY user_email`);
-  res.json(rows.map(r => r.user_email));
+  await maskRows(rows);
+  // After masking, sort aliases naturally so USER-2 < USER-10.
+  const out = rows.map(r => r.user_email);
+  if (isObscureMode()) {
+    out.sort((a, b) => {
+      const na = parseInt((a || "").slice(5), 10);
+      const nb = parseInt((b || "").slice(5), 10);
+      if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
+  res.json(out);
 });
 
 // ── Plan config CRUD ────────────────────────────────────────────────────────
@@ -401,7 +423,8 @@ router.post("/members/import", express.text({ type: "text/csv", limit: "1mb" }),
 // ── 5-hour session windows ──────────────────────────────────────────────────
 router.get("/stats/session-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
 
   const windows = query(db, `
@@ -431,6 +454,7 @@ router.get("/stats/session-windows", async (req, res) => {
     ORDER BY window_start DESC
   `, wc.params);
 
+  await maskRows(windows);
   res.json(computeSessionWindowStats(windows));
 });
 
@@ -466,6 +490,10 @@ router.get("/stats/billing-summary", async (req, res) => {
     totalTokens += u.tokens || 0;
   }
 
+  // Mask both user_email and the joined-from-org_members `name` so privacy
+  // isn't leaked through the friendly name column.
+  await maskRows(byUser, ["user_email", "name"]);
+
   res.json({
     billing_period: period,
     seat_costs: {
@@ -481,7 +509,8 @@ router.get("/stats/billing-summary", async (req, res) => {
 // ── 7-day weekly rolling windows ────────────────────────────────────────────
 router.get("/stats/weekly-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
+  const { from, to } = req.query;
+  const user = await unmaskFilter(req.query.user);
   const wc = whereClause(from, to, user);
 
   // Group requests into 7-day (168-hour) rolling windows per user,
@@ -513,6 +542,7 @@ router.get("/stats/weekly-windows", async (req, res) => {
     ORDER BY window_start DESC
   `, wc.params);
 
+  await maskRows(windows);
   res.json(computeSessionWindowStats(windows));
 });
 
@@ -572,6 +602,8 @@ router.get("/admin/per-user-cost", async (req, res) => {
       anthropic_tokens: data.tokens,
       days_active: data.days_active,
     }));
+
+    await maskRows(users, ["email"], "email");
 
     res.json({ available: true, billing_period: period, users });
   } catch (err) {
