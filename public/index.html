@@ -79,6 +79,77 @@
     }
     .filters button:hover { background: var(--accent2); }
 
+    .multi-select { position: relative; }
+    .ms-trigger {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 160px;
+      text-align: left;
+    }
+    .ms-trigger:hover { border-color: var(--accent2); }
+    .ms-trigger::after {
+      content: '▾';
+      float: right;
+      color: var(--text-dim);
+      margin-left: 8px;
+    }
+    .ms-panel {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 50;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      min-width: 240px;
+      max-height: 360px;
+      overflow-y: auto;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+    }
+    .ms-search {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .ms-section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-dim);
+      padding: 6px 4px 4px;
+    }
+    .ms-sep {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 6px 0;
+    }
+    .ms-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .ms-row:hover { background: var(--surface2); }
+    .ms-row input[type="checkbox"] { margin: 0; cursor: pointer; }
+    .ms-row .ms-label { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ms-empty { font-size: 12px; color: var(--text-dim); padding: 6px; }
+
     main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
 
     .ingest-dot {
@@ -466,8 +537,22 @@
       <input type="date" id="filterFrom">
       <label>To</label>
       <input type="date" id="filterTo">
-      <label>User</label>
-      <select id="filterUser"><option value="">All</option></select>
+      <label>Audience</label>
+      <div class="multi-select" id="filterAudience">
+        <button type="button" class="ms-trigger" id="filterAudienceTrigger">All</button>
+        <div class="ms-panel" id="filterAudiencePanel" hidden>
+          <input type="text" class="ms-search" id="filterAudienceSearch" placeholder="Search users…">
+          <div class="ms-section ms-teams" id="msTeams" hidden>
+            <div class="ms-section-label">Teams</div>
+            <div class="ms-rows" id="msTeamsRows"></div>
+          </div>
+          <hr class="ms-sep" id="msSep" hidden>
+          <div class="ms-section ms-users">
+            <div class="ms-section-label">Users</div>
+            <div class="ms-rows" id="msUsersRows"></div>
+          </div>
+        </div>
+      </div>
       <button onclick="refresh()">Apply</button>
       <a class="gear-btn" href="/settings.html" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -577,15 +662,19 @@
     Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, sans-serif';
     Chart.defaults.font.size = 12;
 
+    // ── Audience filter state ──────────────────────────────────────
+    const audience = { teams: new Set(), users: new Set() };
+    let audienceTeamsList = []; // most recent /api/teams response, used for label rendering
+
     // ── Helpers ────────────────────────────────────────────────────
     function qs() {
       const p = new URLSearchParams();
       const from = document.getElementById('filterFrom').value;
       const to   = document.getElementById('filterTo').value;
-      const user = document.getElementById('filterUser').value;
       if (from) p.set('from', from);
       if (to)   p.set('to', to + 'T23:59:59');
-      if (user) p.set('user', user);
+      if (audience.users.size) p.set('users', [...audience.users].join(','));
+      if (audience.teams.size) p.set('teams', [...audience.teams].join(','));
       return p.toString() ? '?' + p.toString() : '';
     }
 
@@ -609,9 +698,121 @@
       if (charts[id]) { charts[id].destroy(); delete charts[id]; }
     }
 
+    // ── Audience multi-select ──────────────────────────────────────
+    function renderAudiencePanel(teams, users) {
+      audienceTeamsList = teams;
+
+      // Prune any selected team ids that no longer exist
+      const teamIds = new Set(teams.map(t => t.id));
+      for (const id of [...audience.teams]) {
+        if (!teamIds.has(id)) audience.teams.delete(id);
+      }
+      // Prune selected users that vanished from the list (rare — covers seed data resets)
+      const userSet = new Set(users);
+      for (const u of [...audience.users]) {
+        if (!userSet.has(u)) audience.users.delete(u);
+      }
+
+      const teamsSection = document.getElementById('msTeams');
+      const sep = document.getElementById('msSep');
+      const teamsRows = document.getElementById('msTeamsRows');
+      const usersRows = document.getElementById('msUsersRows');
+
+      if (teams.length > 0) {
+        teamsSection.hidden = false;
+        sep.hidden = false;
+        teamsRows.innerHTML = '';
+        teams.forEach(t => {
+          const row = document.createElement('label');
+          row.className = 'ms-row';
+          row.innerHTML = `<input type="checkbox" data-team-id="${t.id}"${audience.teams.has(t.id) ? ' checked' : ''}><span class="ms-label">${escapeHtml(t.name)}</span>`;
+          teamsRows.appendChild(row);
+        });
+      } else {
+        teamsSection.hidden = true;
+        sep.hidden = true;
+      }
+
+      usersRows.innerHTML = '';
+      if (users.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'ms-empty';
+        empty.textContent = 'No users yet';
+        usersRows.appendChild(empty);
+      } else {
+        users.forEach(u => {
+          const row = document.createElement('label');
+          row.className = 'ms-row';
+          row.dataset.email = u;
+          row.innerHTML = `<input type="checkbox" data-user-email="${escapeAttr(u)}"${audience.users.has(u) ? ' checked' : ''}><span class="ms-label">${escapeHtml(u)}</span>`;
+          usersRows.appendChild(row);
+        });
+      }
+
+      updateAudienceTriggerLabel();
+    }
+
+    function updateAudienceTriggerLabel() {
+      const trigger = document.getElementById('filterAudienceTrigger');
+      const total = audience.teams.size + audience.users.size;
+      if (total === 0) {
+        trigger.textContent = 'All';
+      } else if (total === 1 && audience.teams.size === 1) {
+        const id = [...audience.teams][0];
+        const team = audienceTeamsList.find(t => t.id === id);
+        trigger.textContent = team ? team.name : '1 selected';
+      } else if (total === 1 && audience.users.size === 1) {
+        trigger.textContent = [...audience.users][0];
+      } else {
+        trigger.textContent = total + ' selected';
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function escapeAttr(s) { return escapeHtml(s); }
+
+    // Wire up panel interactions once on load
+    document.addEventListener('DOMContentLoaded', () => {
+      const wrap = document.getElementById('filterAudience');
+      const trigger = document.getElementById('filterAudienceTrigger');
+      const panel = document.getElementById('filterAudiencePanel');
+      const search = document.getElementById('filterAudienceSearch');
+
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panel.hidden = !panel.hidden;
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!wrap.contains(e.target)) panel.hidden = true;
+      });
+
+      panel.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t.dataset.teamId) {
+          const id = parseInt(t.dataset.teamId, 10);
+          if (t.checked) audience.teams.add(id); else audience.teams.delete(id);
+        } else if (t.dataset.userEmail) {
+          if (t.checked) audience.users.add(t.dataset.userEmail);
+          else audience.users.delete(t.dataset.userEmail);
+        }
+        updateAudienceTriggerLabel();
+      });
+
+      search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        document.querySelectorAll('#msUsersRows .ms-row').forEach(row => {
+          const email = (row.dataset.email || '').toLowerCase();
+          row.style.display = !q || email.includes(q) ? '' : 'none';
+        });
+      });
+    });
+
     // ── Render ─────────────────────────────────────────────────────
     async function refresh() {
-      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users, sessionWindows, weeklyWindows, billing, adminCost] =
+      const [summary, costTime, byModel, tools, hourly, byUser, sessions, events, users, teams, sessionWindows, weeklyWindows, billing, adminCost] =
         await Promise.all([
           api('/stats/summary'),
           api('/stats/cost-over-time'),
@@ -622,22 +823,14 @@
           api('/sessions'),
           api('/events/recent'),
           api('/users'),
+          api('/teams'),
           api('/stats/session-windows'),
           api('/stats/weekly-windows'),
           api('/stats/billing-summary'),
           api('/admin/per-user-cost'),
         ]);
 
-      // Populate user filter
-      const sel = document.getElementById('filterUser');
-      const current = sel.value;
-      sel.innerHTML = '<option value="">All</option>';
-      users.forEach(u => {
-        const o = document.createElement('option');
-        o.value = u; o.textContent = u;
-        if (u === current) o.selected = true;
-        sel.appendChild(o);
-      });
+      renderAudiencePanel(teams || [], users || []);
 
       renderKPIs(summary);
       renderPlanOverview(sessionWindows, weeklyWindows, billing);

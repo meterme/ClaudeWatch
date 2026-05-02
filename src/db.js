@@ -175,6 +175,22 @@ function migrate(db) {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS teams (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT UNIQUE NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS team_members (
+      team_id     INTEGER NOT NULL,
+      user_email  TEXT NOT NULL,
+      PRIMARY KEY (team_id, user_email)
+    )
+  `);
+
   // Indexes for common query patterns
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_ts ON api_requests(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user ON api_requests(user_email)`);
@@ -183,6 +199,7 @@ function migrate(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_prompts_ts ON user_prompts(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user_ts ON api_requests(user_email, timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_user_aliases_alias ON user_aliases(alias)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(user_email)`);
 
   persist();
 }
