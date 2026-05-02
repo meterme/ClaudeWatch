@@ -21,8 +21,8 @@ const router = express.Router();
 router.get("/stats/summary", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
 
   const totalCost = scalar(db,
     `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests ${wc.sql}`, wc.params);
@@ -51,8 +51,8 @@ router.get("/stats/summary", async (req, res) => {
 router.get("/stats/cost-over-time", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT DATE(timestamp) AS day,
             SUM(cost_usd) AS cost,
@@ -69,8 +69,8 @@ router.get("/stats/cost-over-time", async (req, res) => {
 router.get("/stats/by-model", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT model,
             COUNT(*) AS requests,
@@ -87,8 +87,8 @@ router.get("/stats/by-model", async (req, res) => {
 router.get("/stats/by-user", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT user_email,
             COUNT(*) AS requests,
@@ -128,8 +128,8 @@ router.get("/stats/by-user", async (req, res) => {
 router.get("/stats/tools", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user, "tool_uses");
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT tool_name,
             COUNT(*) AS uses,
@@ -146,8 +146,8 @@ router.get("/stats/tools", async (req, res) => {
 router.get("/stats/hourly-activity", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT CAST(strftime('%w', timestamp) AS INTEGER) AS dow,
             CAST(strftime('%H', timestamp) AS INTEGER) AS hour,
@@ -163,7 +163,7 @@ router.get("/stats/hourly-activity", async (req, res) => {
 router.get("/events/recent", async (req, res) => {
   const db = await getDb();
   const limit = Math.min(parseInt(req.query.limit) || 50, 500);
-  const audience = parseAudience(db, req);
+  const audience = await parseAudience(db, req);
 
   let userWhere = "";
   let userParams = [];
@@ -193,7 +193,8 @@ router.get("/events/recent", async (req, res) => {
             NULL, NULL
      FROM api_errors ${userWhere}
      ORDER BY timestamp DESC
-     LIMIT ?`, [limit]);
+     LIMIT ?`,
+    [...userParams, ...userParams, ...userParams, ...userParams, limit]);
   await maskRows(rows);
   res.json(rows);
 });
@@ -202,8 +203,8 @@ router.get("/events/recent", async (req, res) => {
 router.get("/sessions", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
   const rows = query(db,
     `SELECT session_id,
             user_email,
@@ -437,8 +438,8 @@ router.post("/members/import", express.text({ type: "text/csv", limit: "1mb" }),
 router.get("/stats/session-windows", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
 
   const windows = query(db, `
     WITH ordered AS (
@@ -523,8 +524,8 @@ router.get("/stats/billing-summary", async (req, res) => {
 router.get("/stats/weekly-windows", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
-  const user = await unmaskFilter(req.query.user);
-  const wc = whereClause(from, to, user);
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience);
 
   // Group requests into 7-day (168-hour) rolling windows per user,
   // using same gap-based approach as 5-hour windows but with 7-day threshold
@@ -688,6 +689,8 @@ router.get("/teams", async (req, res) => {
   const db = await getDb();
   const teams = query(db, `SELECT id, name, created_at FROM teams ORDER BY name`);
   const members = query(db, `SELECT team_id, user_email FROM team_members ORDER BY user_email`);
+  // Mask members under OBSCURE_USERS so settings shows aliases consistently with /api/users.
+  await maskRows(members);
   const byTeam = {};
   for (const m of members) {
     (byTeam[m.team_id] = byTeam[m.team_id] || []).push(m.user_email);
@@ -742,12 +745,16 @@ router.delete("/teams/:id", async (req, res) => {
 
 router.post("/teams/:id/members", async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const email = (req.body?.email || "").trim();
-  if (!email) return res.status(400).json({ error: "Email required" });
+  const incoming = (req.body?.email || "").trim();
+  if (!incoming) return res.status(400).json({ error: "Email required" });
 
   const db = await getDb();
   const team = query(db, `SELECT id FROM teams WHERE id = ?`, [id])[0];
   if (!team) return res.status(404).json({ error: "Team not found" });
+
+  // Store the real email even if the client sent an alias (under OBSCURE_USERS),
+  // so audience filtering can match api_requests.user_email directly.
+  const email = await unmaskFilter(incoming);
 
   db.run(
     `INSERT INTO team_members (team_id, user_email) VALUES (?, ?)
@@ -760,7 +767,8 @@ router.post("/teams/:id/members", async (req, res) => {
 
 router.delete("/teams/:id/members/:email", async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const email = decodeURIComponent(req.params.email);
+  const incoming = decodeURIComponent(req.params.email);
+  const email = await unmaskFilter(incoming);
   const db = await getDb();
   db.run(`DELETE FROM team_members WHERE team_id = ? AND user_email = ?`, [id, email]);
   persist();
@@ -792,15 +800,16 @@ function whereClause(from, to, audience) {
 // Resolves `?users=a@b,c@d` and `?teams=1,3` into a flat email array.
 // Returns null when neither is set (meaning: no user filter).
 // Returns [] when filters were sent but resolve to no emails (meaning: filter to nobody).
-function parseAudience(db, req) {
+// Each value is run through unmaskFilter so callers under OBSCURE_USERS can pass aliases.
+async function parseAudience(db, req) {
   const usersParam = req.query.users;
   const teamsParam = req.query.teams;
 
   if (!usersParam && !teamsParam) return null;
 
-  const emails = new Set();
+  const raw = new Set();
   if (usersParam) {
-    String(usersParam).split(",").map(s => s.trim()).filter(Boolean).forEach(e => emails.add(e));
+    String(usersParam).split(",").map(s => s.trim()).filter(Boolean).forEach(e => raw.add(e));
   }
   if (teamsParam) {
     const ids = String(teamsParam).split(",")
@@ -810,10 +819,12 @@ function parseAudience(db, req) {
       const rows = query(db,
         `SELECT DISTINCT user_email FROM team_members WHERE team_id IN (${placeholders})`,
         ids);
-      rows.forEach(r => { if (r.user_email) emails.add(r.user_email); });
+      rows.forEach(r => { if (r.user_email) raw.add(r.user_email); });
     }
   }
 
+  const emails = new Set();
+  for (const v of raw) emails.add(await unmaskFilter(v));
   return Array.from(emails);
 }
 
