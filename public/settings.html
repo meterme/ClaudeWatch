@@ -326,6 +326,15 @@
       </div>
 
       <div class="card">
+        <h2>Ingest Token</h2>
+        <div class="form-group">
+          <label>INGEST_TOKEN (read-only — configured via environment variable)</label>
+          <input type="text" id="ingestTokenValue" readonly placeholder="not set">
+          <div class="csv-hint" id="ingestTokenHint">Loading…</div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Team Members (Org Import)</h2>
         <div class="form-group">
           <label>Import CSV</label>
@@ -643,122 +652,27 @@
       if (e.key === 'Escape') closeEdit();
     });
 
-    // ── Teams ───────────────────────────────────────────────
-    let knownUsers = [];
-
-    async function loadTeams() {
-      const [teams, users] = await Promise.all([
-        api('/teams'),
-        api('/users'),
-      ]);
-      knownUsers = users || [];
-      renderTeams(teams || []);
-    }
-
-    function renderTeams(teams) {
-      const list = document.getElementById('teamsList');
-      if (!teams.length) {
-        list.innerHTML = '<div class="card" style="color:var(--text-dim)">No teams yet. Create one above to get started.</div>';
-        return;
+    // ── Ingest token (read-only) ────────────────────────────
+    async function loadIngestToken() {
+      const data = await api('/ingest-token');
+      const input = document.getElementById('ingestTokenValue');
+      const hint = document.getElementById('ingestTokenHint');
+      if (data?.set) {
+        input.value = data.value;
+        hint.textContent = 'Authenticated ingest is required. Clients must send Authorization: Bearer <token>.';
+        hint.style.color = 'var(--green)';
+      } else {
+        input.value = '';
+        input.placeholder = 'not set';
+        hint.textContent = 'No INGEST_TOKEN set — the /v1/logs endpoint accepts unauthenticated submissions.';
+        hint.style.color = 'var(--red)';
       }
-      list.innerHTML = teams.map(t => {
-        const memberSet = new Set(t.members);
-        const candidates = knownUsers.filter(u => !memberSet.has(u));
-        const memberRows = t.members.length === 0
-          ? '<div style="color:var(--text-dim);font-size:13px">No members yet.</div>'
-          : t.members.map(email => `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-                <span>${escHtml(email)}</span>
-                <button class="btn btn-sm btn-danger" onclick="removeMember(${t.id}, '${escHtml(email)}')">Remove</button>
-              </div>`).join('');
-        const candidateOpts = candidates.length
-          ? candidates.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('')
-          : '<option value="" disabled>No more users to add</option>';
-        return `
-          <div class="card">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-              <input type="text" id="teamName-${t.id}" value="${escHtml(t.name)}" style="flex:1">
-              <button class="btn btn-sm" onclick="renameTeam(${t.id})">Save</button>
-              <button class="btn btn-sm btn-danger" onclick="deleteTeam(${t.id}, '${escHtml(t.name)}')">Delete</button>
-            </div>
-            <div style="font-size:11px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Members (${t.members.length})</div>
-            <div style="margin-bottom:12px">${memberRows}</div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <select id="addMember-${t.id}" style="flex:1" ${candidates.length ? '' : 'disabled'}>${candidateOpts}</select>
-              <button class="btn btn-sm" onclick="addMember(${t.id})" ${candidates.length ? '' : 'disabled'}>Add</button>
-            </div>
-            <div class="status-msg" id="teamStatus-${t.id}"></div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    async function createTeam() {
-      const name = document.getElementById('newTeamName').value.trim();
-      if (!name) { showStatus('teamCreateStatus', 'Team name required', false); return; }
-      const res = await fetch('/api/teams', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showStatus('teamCreateStatus', data.error || 'Failed to create team', false);
-        return;
-      }
-      document.getElementById('newTeamName').value = '';
-      showStatus('teamCreateStatus', `Team "${name}" created`, true);
-      loadTeams();
-    }
-
-    async function renameTeam(id) {
-      const name = document.getElementById('teamName-' + id).value.trim();
-      if (!name) { showStatus('teamStatus-' + id, 'Name required', false); return; }
-      const res = await fetch('/api/teams/' + id, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showStatus('teamStatus-' + id, data.error || 'Rename failed', false);
-        return;
-      }
-      showStatus('teamStatus-' + id, 'Saved', true);
-      loadTeams();
-    }
-
-    async function deleteTeam(id, name) {
-      if (!confirm(`Delete team "${name}"? Members will be removed from the team but their usage data is unaffected.`)) return;
-      await fetch('/api/teams/' + id, { method: 'DELETE' });
-      loadTeams();
-    }
-
-    async function addMember(id) {
-      const sel = document.getElementById('addMember-' + id);
-      const email = sel.value;
-      if (!email) return;
-      const res = await fetch(`/api/teams/${id}/members`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showStatus('teamStatus-' + id, data.error || 'Failed to add member', false);
-        return;
-      }
-      loadTeams();
-    }
-
-    async function removeMember(id, email) {
-      await fetch(`/api/teams/${id}/members/${encodeURIComponent(email)}`, { method: 'DELETE' });
-      loadTeams();
     }
 
     // ── Init ────────────────────────────────────────────────
     loadPlanConfig();
     loadUsers();
+    loadIngestToken();
   </script>
 </body>
 </html>
