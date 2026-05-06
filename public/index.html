@@ -738,7 +738,8 @@
         data: {
           labels: data.map(d => d.model || 'unknown'),
           datasets: [{
-            data: data.map(d => (d.input_tokens || 0) + (d.output_tokens || 0)),
+            data: data.map(d => (d.input_tokens || 0) + (d.output_tokens || 0)
+                                + (d.cache_read_tokens || 0) + (d.cache_creation_tokens || 0)),
             backgroundColor: colors.slice(0, data.length),
             borderWidth: 0,
           }],
