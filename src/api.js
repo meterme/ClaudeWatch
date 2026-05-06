@@ -82,7 +82,9 @@ router.get("/stats/by-model", async (req, res) => {
             COUNT(*) AS requests,
             SUM(cost_usd) AS cost,
             SUM(input_tokens) AS input_tokens,
-            SUM(output_tokens) AS output_tokens
+            SUM(output_tokens) AS output_tokens,
+            SUM(cache_read_tokens) AS cache_read_tokens,
+            SUM(cache_creation_tokens) AS cache_creation_tokens
      FROM api_requests ${wc.sql}
      GROUP BY model
      ORDER BY cost DESC`, wc.params);
