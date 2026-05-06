@@ -19,14 +19,16 @@ const {
   syncBedrockLogs,
   startBedrockPoller,
 } = require("./bedrock");
+const { maskRows, unmaskFilter, aliasFor, isObscureMode } = require("./user-mask");
 
 const router = express.Router();
 
 // ── Summary stats ───────────────────────────────────────────────────────────
 router.get("/stats/summary", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
 
   const totalCost = scalar(db,
     `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests ${wc.sql}`, wc.params);
@@ -54,8 +56,9 @@ router.get("/stats/summary", async (req, res) => {
 // ── Cost over time (daily) ──────────────────────────────────────────────────
 router.get("/stats/cost-over-time", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT DATE(timestamp) AS day,
             SUM(cost_usd) AS cost,
@@ -71,8 +74,9 @@ router.get("/stats/cost-over-time", async (req, res) => {
 // ── Usage by model ──────────────────────────────────────────────────────────
 router.get("/stats/by-model", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT model,
             COUNT(*) AS requests,
@@ -88,8 +92,9 @@ router.get("/stats/by-model", async (req, res) => {
 // ── Usage by user ───────────────────────────────────────────────────────────
 router.get("/stats/by-user", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT user_email,
             COUNT(*) AS requests,
@@ -124,14 +129,16 @@ router.get("/stats/by-user", async (req, res) => {
     r.top_model_tokens = tm?.tokens || 0;
   }
 
+  await maskRows(rows);
   res.json(rows);
 });
 
 // ── Tool usage breakdown ────────────────────────────────────────────────────
 router.get("/stats/tools", async (req, res) => {
   const db = await getDb();
-  const { from, to, user } = req.query;
-  const wc = whereClause(from, to, user, null, "tool_uses");
+  const { from, to } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, null, "tool_uses");
   const rows = query(db,
     `SELECT tool_name,
             COUNT(*) AS uses,
@@ -147,8 +154,9 @@ router.get("/stats/tools", async (req, res) => {
 // ── Hourly activity heatmap ─────────────────────────────────────────────────
 router.get("/stats/hourly-activity", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT CAST(strftime('%w', timestamp) AS INTEGER) AS dow,
             CAST(strftime('%H', timestamp) AS INTEGER) AS hour,
@@ -164,32 +172,48 @@ router.get("/stats/hourly-activity", async (req, res) => {
 router.get("/events/recent", async (req, res) => {
   const db = await getDb();
   const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+  const audience = await parseAudience(db, req);
+
+  let userWhere = "";
+  let userParams = [];
+  if (Array.isArray(audience)) {
+    if (audience.length === 0) {
+      userWhere = "WHERE 1=0";
+    } else {
+      userWhere = `WHERE user_email IN (${audience.map(() => "?").join(",")})`;
+      userParams = audience;
+    }
+  }
+
   const rows = query(db,
     `SELECT 'api_request' AS type, timestamp, user_email, model, cost_usd, session_id,
             input_tokens, output_tokens, source
-     FROM api_requests
+     FROM api_requests ${userWhere}
      UNION ALL
      SELECT 'tool_use', timestamp, user_email, tool_name, duration_ms, session_id,
             NULL, NULL, NULL
-     FROM tool_uses
+     FROM tool_uses ${userWhere}
      UNION ALL
      SELECT 'prompt', timestamp, user_email, NULL, prompt_length, session_id,
             NULL, NULL, NULL
-     FROM user_prompts
+     FROM user_prompts ${userWhere}
      UNION ALL
      SELECT 'error', timestamp, user_email, error_message, status_code, session_id,
             NULL, NULL, NULL
-     FROM api_errors
+     FROM api_errors ${userWhere}
      ORDER BY timestamp DESC
-     LIMIT ?`, [limit]);
+     LIMIT ?`,
+    [...userParams, ...userParams, ...userParams, ...userParams, limit]);
+  await maskRows(rows);
   res.json(rows);
 });
 
 // ── Sessions list ───────────────────────────────────────────────────────────
 router.get("/sessions", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT session_id,
             user_email,
@@ -203,6 +227,7 @@ router.get("/sessions", async (req, res) => {
      GROUP BY session_id
      ORDER BY started DESC
      LIMIT 100`, wc.params);
+  await maskRows(rows);
   res.json(rows);
 });
 
@@ -308,7 +333,18 @@ router.get("/users", async (req, res) => {
   const db = await getDb();
   const rows = query(db,
     `SELECT DISTINCT user_email FROM api_requests WHERE user_email IS NOT NULL ORDER BY user_email`);
-  res.json(rows.map(r => r.user_email));
+  await maskRows(rows);
+  // After masking, sort aliases naturally so USER-2 < USER-10.
+  const out = rows.map(r => r.user_email);
+  if (isObscureMode()) {
+    out.sort((a, b) => {
+      const na = parseInt((a || "").slice(5), 10);
+      const nb = parseInt((b || "").slice(5), 10);
+      if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
+  res.json(out);
 });
 
 // ── Plan config CRUD ────────────────────────────────────────────────────────
@@ -410,8 +446,9 @@ router.post("/members/import", express.text({ type: "text/csv", limit: "1mb" }),
 // ── 5-hour session windows ──────────────────────────────────────────────────
 router.get("/stats/session-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
 
   const windows = query(db, `
     WITH ordered AS (
@@ -440,6 +477,7 @@ router.get("/stats/session-windows", async (req, res) => {
     ORDER BY window_start DESC
   `, wc.params);
 
+  await maskRows(windows);
   res.json(computeSessionWindowStats(windows));
 });
 
@@ -475,6 +513,10 @@ router.get("/stats/billing-summary", async (req, res) => {
     totalTokens += u.tokens || 0;
   }
 
+  // Mask both user_email and the joined-from-org_members `name` so privacy
+  // isn't leaked through the friendly name column.
+  await maskRows(byUser, ["user_email", "name"]);
+
   res.json({
     billing_period: period,
     seat_costs: {
@@ -490,8 +532,9 @@ router.get("/stats/billing-summary", async (req, res) => {
 // ── 7-day weekly rolling windows ────────────────────────────────────────────
 router.get("/stats/weekly-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to, user, source } = req.query;
-  const wc = whereClause(from, to, user, source);
+  const { from, to, source } = req.query;
+  const audience = await parseAudience(db, req);
+  const wc = whereClause(from, to, audience, source);
 
   // Group requests into 7-day (168-hour) rolling windows per user,
   // using same gap-based approach as 5-hour windows but with 7-day threshold
@@ -522,6 +565,7 @@ router.get("/stats/weekly-windows", async (req, res) => {
     ORDER BY window_start DESC
   `, wc.params);
 
+  await maskRows(windows);
   res.json(computeSessionWindowStats(windows));
 });
 
@@ -582,11 +626,19 @@ router.get("/admin/per-user-cost", async (req, res) => {
       days_active: data.days_active,
     }));
 
+    await maskRows(users, ["email"], "email");
+
     res.json({ available: true, billing_period: period, users });
   } catch (err) {
     console.error("[admin] per-user-cost error:", err.message);
     res.json({ available: false, error: err.message });
   }
+});
+
+// ── Ingest token status (read-only; configured via INGEST_TOKEN env) ────────
+router.get("/ingest-token", (req, res) => {
+  const value = process.env.INGEST_TOKEN || null;
+  res.json({ set: !!value, value });
 });
 
 // ── Dashboard user management ───────────────────────────────────────────────
@@ -693,13 +745,117 @@ router.post("/bedrock/sync", async (req, res) => {
   }
 });
 
+// ── Teams CRUD ──────────────────────────────────────────────────────────────
+router.get("/teams", async (req, res) => {
+  const db = await getDb();
+  const teams = query(db, `SELECT id, name, created_at FROM teams ORDER BY name`);
+  const members = query(db, `SELECT team_id, user_email FROM team_members ORDER BY user_email`);
+  // Mask members under OBSCURE_USERS so settings shows aliases consistently with /api/users.
+  await maskRows(members);
+  const byTeam = {};
+  for (const m of members) {
+    (byTeam[m.team_id] = byTeam[m.team_id] || []).push(m.user_email);
+  }
+  res.json(teams.map(t => ({ ...t, members: byTeam[t.id] || [] })));
+});
+
+router.post("/teams", async (req, res) => {
+  const name = (req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Team name required" });
+
+  const db = await getDb();
+  try {
+    db.run(`INSERT INTO teams (name) VALUES (?)`, [name]);
+    persist();
+    const team = query(db, `SELECT id, name, created_at FROM teams WHERE name = ?`, [name])[0];
+    res.json({ ok: true, team: { ...team, members: [] } });
+  } catch (err) {
+    if (err.message.includes("UNIQUE")) {
+      return res.status(409).json({ error: "Team name already exists" });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/teams/:id", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const name = (req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Team name required" });
+
+  const db = await getDb();
+  try {
+    db.run(`UPDATE teams SET name = ? WHERE id = ?`, [name, id]);
+    persist();
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.message.includes("UNIQUE")) {
+      return res.status(409).json({ error: "Team name already exists" });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/teams/:id", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const db = await getDb();
+  db.run(`DELETE FROM team_members WHERE team_id = ?`, [id]);
+  db.run(`DELETE FROM teams WHERE id = ?`, [id]);
+  persist();
+  res.json({ ok: true });
+});
+
+router.post("/teams/:id/members", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const incoming = (req.body?.email || "").trim();
+  if (!incoming) return res.status(400).json({ error: "Email required" });
+
+  const db = await getDb();
+  const team = query(db, `SELECT id FROM teams WHERE id = ?`, [id])[0];
+  if (!team) return res.status(404).json({ error: "Team not found" });
+
+  // Store the real email even if the client sent an alias (under OBSCURE_USERS),
+  // so audience filtering can match api_requests.user_email directly.
+  const email = await unmaskFilter(incoming);
+
+  db.run(
+    `INSERT INTO team_members (team_id, user_email) VALUES (?, ?)
+     ON CONFLICT DO NOTHING`,
+    [id, email]
+  );
+  persist();
+  res.json({ ok: true });
+});
+
+router.delete("/teams/:id/members/:email", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const incoming = decodeURIComponent(req.params.email);
+  const email = await unmaskFilter(incoming);
+  const db = await getDb();
+  db.run(`DELETE FROM team_members WHERE team_id = ? AND user_email = ?`, [id, email]);
+  persist();
+  res.json({ ok: true });
+});
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
-function whereClause(from, to, user, source, table = "api_requests") {
+// `audience` is either null (no user filter) or an array of emails.
+// Empty array means "filter to nobody" → emit 1=0 so the result is empty.
+// `source` filters api_requests.source ("anthropic"/"bedrock"/"claude_code"),
+// only when querying the api_requests table.
+function whereClause(from, to, audience, source, table = "api_requests") {
   const conds = [];
   const params = [];
   if (from) { conds.push("timestamp >= ?"); params.push(from); }
   if (to)   { conds.push("timestamp <= ?"); params.push(to); }
-  if (user) { conds.push("user_email = ?"); params.push(user); }
+
+  if (Array.isArray(audience)) {
+    if (audience.length === 0) {
+      conds.push("1=0");
+    } else {
+      conds.push(`user_email IN (${audience.map(() => "?").join(",")})`);
+      params.push(...audience);
+    }
+  }
+
   if (source && source !== "all" && table === "api_requests") {
     if (source === "claude_code") {
       conds.push("(source = 'claude_code' OR source IS NULL)");
@@ -707,8 +863,40 @@ function whereClause(from, to, user, source, table = "api_requests") {
       conds.push("source = ?"); params.push(source);
     }
   }
+
   const sql = conds.length ? "WHERE " + conds.join(" AND ") : "";
   return { sql, params };
+}
+
+// Resolves `?users=a@b,c@d` and `?teams=1,3` into a flat email array.
+// Returns null when neither is set (meaning: no user filter).
+// Returns [] when filters were sent but resolve to no emails (meaning: filter to nobody).
+// Each value is run through unmaskFilter so callers under OBSCURE_USERS can pass aliases.
+async function parseAudience(db, req) {
+  const usersParam = req.query.users;
+  const teamsParam = req.query.teams;
+
+  if (!usersParam && !teamsParam) return null;
+
+  const raw = new Set();
+  if (usersParam) {
+    String(usersParam).split(",").map(s => s.trim()).filter(Boolean).forEach(e => raw.add(e));
+  }
+  if (teamsParam) {
+    const ids = String(teamsParam).split(",")
+      .map(s => parseInt(s, 10)).filter(n => Number.isFinite(n));
+    if (ids.length) {
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = query(db,
+        `SELECT DISTINCT user_email FROM team_members WHERE team_id IN (${placeholders})`,
+        ids);
+      rows.forEach(r => { if (r.user_email) raw.add(r.user_email); });
+    }
+  }
+
+  const emails = new Set();
+  for (const v of raw) emails.add(await unmaskFilter(v));
+  return Array.from(emails);
 }
 
 function query(db, sql, params = []) {

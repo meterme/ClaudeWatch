@@ -42,6 +42,33 @@ export OTEL_LOGS_EXPORTER="otlp"
 
 Claude Code will then POST events to `http://your-server:3456/v1/logs` in OTLP JSON format.
 
+### Requiring a shared ingest token
+
+By default the OTLP receiver is open — anyone who can reach the port can write events. To require a shared secret, set `INGEST_TOKEN` on the server, then have each Claude Code client send it via the standard OpenTelemetry headers env var:
+
+```bash
+# On the server:
+export INGEST_TOKEN="some-long-random-string"
+
+# On each Claude Code client:
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer some-long-random-string"
+```
+
+Or in managed settings:
+
+```jsonc
+{
+  "env": {
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://your-server:3456",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer some-long-random-string"
+  }
+}
+```
+
+The server compares tokens in constant time and returns 401 on mismatch. Leaving `INGEST_TOKEN` unset preserves the open-ingest behavior.
+
 ## Architecture
 
 ```
@@ -98,7 +125,15 @@ All `/api/stats/*` endpoints accept optional query params: `from`, `to`, `user`.
 
 ## Configuration
 
+All configuration is via environment variables. None are required — the server boots with sensible defaults and generates a random admin password on first run.
+
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `PORT` | `3456` | Server listen port |
-| `SEED_DEMO` | `0` | Set to `1` to populate demo data on first run |
+| `PORT` | `3456` | Server listen port (used for both the dashboard and the OTLP receiver). |
+| `SEED_DEMO` | `0` | Set to `1` to populate ~30 days of demo data on first run. No-op if `api_requests` already has rows. |
+| `AUTH_DISABLED` | `0` | Set to `1` to disable dashboard login entirely. Independent from `INGEST_TOKEN` — this flag only controls the dashboard, not the OTLP receiver. |
+| `INGEST_TOKEN` | _(unset)_ | If set, the OTLP receiver at `/v1/logs` requires `Authorization: Bearer <token>` on every request. Clients send it via OpenTelemetry's `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"`. Leave unset for open ingest (backward compatible). |
+| `SESSION_SECRET` | random | HMAC key used to sign session cookies. If unset, a random 32-byte secret is generated at startup, which invalidates all existing sessions on every restart — set this to a stable value in production. |
+| `AUTH_USER` | `admin` | Username for the **initial** admin account. Only read on first run when no `dashboard_users` rows exist; ignored on subsequent boots. Manage users from the admin UI after that. |
+| `AUTH_PASS` | random | Password for the **initial** admin account. Only read on first run. If unset, a random password is generated and printed to stdout — capture it from the logs or set this explicitly. |
+| `OBSCURE_USERS` | `0` | Set to `1` to mask user emails behind stable `USER-N` tokens (`USER-1`, `USER-2`, …) in the dashboard. Real emails remain in the database; aliases are persistent and survive toggling the flag. On startup any users without an alias are assigned one; new users seen during ingest are assigned on the fly. |

@@ -170,6 +170,30 @@ function migrate(db) {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_aliases (
+      email      TEXT PRIMARY KEY,
+      alias      TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS teams (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT UNIQUE NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS team_members (
+      team_id     INTEGER NOT NULL,
+      user_email  TEXT NOT NULL,
+      PRIMARY KEY (team_id, user_email)
+    )
+  `);
+
   // One-time backfill: strip Bedrock cross-region inference profile prefixes
   // ("us.", "eu.", "apac.", etc.) and the "anthropic." prefix from existing
   // api_requests.model so historical rows match the canonical form written by
@@ -202,6 +226,8 @@ function migrate(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user_ts ON api_requests(user_email, timestamp)`);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_req_aws_rid ON api_requests(aws_request_id) WHERE aws_request_id IS NOT NULL`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_source ON api_requests(source)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_user_aliases_alias ON user_aliases(alias)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(user_email)`);
 
   persist();
 }

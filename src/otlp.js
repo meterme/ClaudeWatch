@@ -1,4 +1,5 @@
 const { getDb, persist } = require("./db");
+const { isObscureMode, assignAliasIfMissing } = require("./user-mask");
 
 /**
  * Parse OTLP JSON logs export and insert into SQLite.
@@ -41,6 +42,9 @@ async function ingestOtlpLogs(payload) {
 
         if (eventName === "claude_code.api_request") {
           console.log("[otlp-debug] api_request attrs:", JSON.stringify(attrs, null, 2));
+        }
+        if (isObscureMode() && attrs["user.email"]) {
+          await assignAliasIfMissing(attrs["user.email"]);
         }
         inserted += insertEvent(db, eventName, ts, attrs);
       }
