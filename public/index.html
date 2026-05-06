@@ -452,6 +452,12 @@
       <input type="date" id="filterTo">
       <label>User</label>
       <select id="filterUser"><option value="">All</option></select>
+      <label>Source</label>
+      <select id="filterSource">
+        <option value="all">All</option>
+        <option value="claude_code">Claude Code</option>
+        <option value="bedrock">Bedrock</option>
+      </select>
       <button onclick="refresh()">Apply</button>
       <a class="gear-btn" href="/settings.html" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -563,12 +569,14 @@
     // ── Helpers ────────────────────────────────────────────────────
     function qs() {
       const p = new URLSearchParams();
-      const from = document.getElementById('filterFrom').value;
-      const to   = document.getElementById('filterTo').value;
-      const user = document.getElementById('filterUser').value;
+      const from   = document.getElementById('filterFrom').value;
+      const to     = document.getElementById('filterTo').value;
+      const user   = document.getElementById('filterUser').value;
+      const source = document.getElementById('filterSource').value;
       if (from) p.set('from', from);
       if (to)   p.set('to', to + 'T23:59:59');
       if (user) p.set('user', user);
+      if (source && source !== 'all') p.set('source', source);
       return p.toString() ? '?' + p.toString() : '';
     }
 
@@ -857,7 +865,8 @@
         const ws = userWindowStats[u.user_email];
         const windows = ws ? ws.count : 0;
         const velocity = ws && ws.totalHours > 0 ? ws.totalCost / ws.totalHours : null;
-        const userTokens = (u.input_tokens || 0) + (u.output_tokens || 0);
+        const userTokens = (u.input_tokens || 0) + (u.output_tokens || 0)
+                         + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
 
         // Seat tier
         const bu = billingByUser[u.user_email];
@@ -917,6 +926,9 @@
       tbody.innerHTML = data.slice(0, 100).map(e => {
         const ts = new Date(e.timestamp).toLocaleString();
         const cls = tagClass[e.type] || 'tag-req';
+        const sourceBadge = e.source === 'bedrock'
+          ? ' <span class="tag" style="background:#f59e0b22;color:var(--orange)">bedrock</span>'
+          : '';
         let valueCell;
         if (e.type === 'api_request') {
           const tokens = (e.input_tokens || 0) + (e.output_tokens || 0);
@@ -926,7 +938,7 @@
         }
         return `<tr>
           <td style="white-space:nowrap">${ts}</td>
-          <td><span class="tag ${cls}">${e.type}</span></td>
+          <td><span class="tag ${cls}">${e.type}</span>${sourceBadge}</td>
           <td>${e.user_email || '—'}</td>
           <td>${e.model || '—'}</td>
           <td>${valueCell}</td>

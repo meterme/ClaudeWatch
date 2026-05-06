@@ -12,6 +12,7 @@ const {
   authCheckHandler,
   loginPageHandler,
 } = require("./auth");
+const { startBedrockPoller } = require("./bedrock");
 
 const app = express();
 const PORT = process.env.PORT || 3456;
@@ -76,6 +77,7 @@ async function maybeSeedDemo() {
 (async () => {
   await getDb(); // ensure DB is initialized
   await initAuth(); // ensure auth password exists
+  await startBedrockPoller(); // start background sync if configured
   await maybeSeedDemo();
 
   app.listen(PORT, () => {

@@ -91,8 +91,9 @@ function insertEvent(db, eventName, ts, a) {
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
            model, cost_usd, input_tokens, output_tokens,
            cache_read_tokens, cache_creation_tokens, duration_ms,
-           app_version, terminal_type, response_content)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           app_version, terminal_type, response_content,
+           source, aws_request_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'claude_code',NULL)`,
         [
           common.ts,
           common.session_id,

@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.1019.0",
     "express": "^4.21.0",
     "sql.js": "^1.11.0"
   }
