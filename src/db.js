@@ -55,6 +55,9 @@ function migrate(db) {
 
   // Add response_content if upgrading from older schema
   try { db.run(`ALTER TABLE api_requests ADD COLUMN response_content TEXT`); } catch (_) {}
+  // Bedrock: identify the event source and deduplicate by AWS request ID
+  try { db.run(`ALTER TABLE api_requests ADD COLUMN source TEXT`); } catch (_) {}
+  try { db.run(`ALTER TABLE api_requests ADD COLUMN aws_request_id TEXT`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS tool_uses (
@@ -191,6 +194,29 @@ function migrate(db) {
     )
   `);
 
+  // One-time backfill: strip Bedrock cross-region inference profile prefixes
+  // ("us.", "eu.", "apac.", etc.) and the "anthropic." prefix from existing
+  // api_requests.model so historical rows match the canonical form written by
+  // normalizeModelId() going forward.
+  const flagRes = db.exec(
+    "SELECT 1 FROM config WHERE key = 'model_ids_normalized_v1'"
+  );
+  const alreadyNormalized = flagRes.length > 0 && flagRes[0].values.length > 0;
+  if (!alreadyNormalized) {
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'us.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'eu.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 6)  WHERE model LIKE 'apac.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'ap.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'ca.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'sa.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 4)  WHERE model LIKE 'af.%'`);
+    db.run(`UPDATE api_requests SET model = SUBSTR(model, 11) WHERE model LIKE 'anthropic.%'`);
+    db.run(
+      `INSERT INTO config (key, value) VALUES ('model_ids_normalized_v1', '1')
+         ON CONFLICT(key) DO UPDATE SET value = '1'`
+    );
+  }
+
   // Indexes for common query patterns
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_ts ON api_requests(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user ON api_requests(user_email)`);
@@ -198,6 +224,8 @@ function migrate(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_tool_uses_ts ON tool_uses(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_prompts_ts ON user_prompts(timestamp)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_user_ts ON api_requests(user_email, timestamp)`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_req_aws_rid ON api_requests(aws_request_id) WHERE aws_request_id IS NOT NULL`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_source ON api_requests(source)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_user_aliases_alias ON user_aliases(alias)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(user_email)`);
 

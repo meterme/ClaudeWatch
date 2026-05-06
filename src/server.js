@@ -13,6 +13,7 @@ const {
   authCheckHandler,
   loginPageHandler,
 } = require("./auth");
+const { startBedrockPoller } = require("./bedrock");
 const { isObscureMode, ensureAliasesForAllUsers } = require("./user-mask");
 
 const app = express();
@@ -94,6 +95,7 @@ async function maybeSeedDemo() {
 (async () => {
   await getDb(); // ensure DB is initialized
   await initAuth(); // ensure auth password exists
+  await startBedrockPoller(); // start background sync if configured
   if (isObscureMode()) await ensureAliasesForAllUsers();
   await maybeSeedDemo();
 

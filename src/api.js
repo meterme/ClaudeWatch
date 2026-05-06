@@ -13,6 +13,12 @@ const {
   updateDashboardUser,
   deleteDashboardUser,
 } = require("./auth");
+const {
+  getBedrockConfig,
+  setBedrockConfig,
+  syncBedrockLogs,
+  startBedrockPoller,
+} = require("./bedrock");
 const { maskRows, unmaskFilter, aliasFor, isObscureMode } = require("./user-mask");
 
 const router = express.Router();
@@ -20,9 +26,9 @@ const router = express.Router();
 // ── Summary stats ───────────────────────────────────────────────────────────
 router.get("/stats/summary", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
 
   const totalCost = scalar(db,
     `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests ${wc.sql}`, wc.params);
@@ -50,9 +56,9 @@ router.get("/stats/summary", async (req, res) => {
 // ── Cost over time (daily) ──────────────────────────────────────────────────
 router.get("/stats/cost-over-time", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT DATE(timestamp) AS day,
             SUM(cost_usd) AS cost,
@@ -68,15 +74,17 @@ router.get("/stats/cost-over-time", async (req, res) => {
 // ── Usage by model ──────────────────────────────────────────────────────────
 router.get("/stats/by-model", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT model,
             COUNT(*) AS requests,
             SUM(cost_usd) AS cost,
             SUM(input_tokens) AS input_tokens,
-            SUM(output_tokens) AS output_tokens
+            SUM(output_tokens) AS output_tokens,
+            SUM(cache_read_tokens) AS cache_read_tokens,
+            SUM(cache_creation_tokens) AS cache_creation_tokens
      FROM api_requests ${wc.sql}
      GROUP BY model
      ORDER BY cost DESC`, wc.params);
@@ -86,24 +94,27 @@ router.get("/stats/by-model", async (req, res) => {
 // ── Usage by user ───────────────────────────────────────────────────────────
 router.get("/stats/by-user", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT user_email,
             COUNT(*) AS requests,
             SUM(cost_usd) AS cost,
             SUM(input_tokens) AS input_tokens,
             SUM(output_tokens) AS output_tokens,
+            SUM(cache_read_tokens) AS cache_read_tokens,
+            SUM(cache_creation_tokens) AS cache_creation_tokens,
             COUNT(DISTINCT session_id) AS sessions
      FROM api_requests ${wc.sql}
      GROUP BY user_email
      ORDER BY cost DESC`, wc.params);
 
-  // Determine top model per user (most tokens in the same window)
+  // Determine top model per user (most tokens in the same window, including cache)
   const modelRows = query(db,
     `SELECT user_email, model,
-            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens
+            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)
+                + COALESCE(cache_read_tokens,0) + COALESCE(cache_creation_tokens,0)) AS total_tokens
      FROM api_requests ${wc.sql}
      GROUP BY user_email, model
      ORDER BY user_email, total_tokens DESC`, wc.params);
@@ -129,7 +140,7 @@ router.get("/stats/tools", async (req, res) => {
   const db = await getDb();
   const { from, to } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, null, "tool_uses");
   const rows = query(db,
     `SELECT tool_name,
             COUNT(*) AS uses,
@@ -145,9 +156,9 @@ router.get("/stats/tools", async (req, res) => {
 // ── Hourly activity heatmap ─────────────────────────────────────────────────
 router.get("/stats/hourly-activity", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT CAST(strftime('%w', timestamp) AS INTEGER) AS dow,
             CAST(strftime('%H', timestamp) AS INTEGER) AS hour,
@@ -178,19 +189,19 @@ router.get("/events/recent", async (req, res) => {
 
   const rows = query(db,
     `SELECT 'api_request' AS type, timestamp, user_email, model, cost_usd, session_id,
-            input_tokens, output_tokens
+            input_tokens, output_tokens, source
      FROM api_requests ${userWhere}
      UNION ALL
      SELECT 'tool_use', timestamp, user_email, tool_name, duration_ms, session_id,
-            NULL, NULL
+            NULL, NULL, NULL
      FROM tool_uses ${userWhere}
      UNION ALL
      SELECT 'prompt', timestamp, user_email, NULL, prompt_length, session_id,
-            NULL, NULL
+            NULL, NULL, NULL
      FROM user_prompts ${userWhere}
      UNION ALL
      SELECT 'error', timestamp, user_email, error_message, status_code, session_id,
-            NULL, NULL
+            NULL, NULL, NULL
      FROM api_errors ${userWhere}
      ORDER BY timestamp DESC
      LIMIT ?`,
@@ -202,9 +213,9 @@ router.get("/events/recent", async (req, res) => {
 // ── Sessions list ───────────────────────────────────────────────────────────
 router.get("/sessions", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
   const rows = query(db,
     `SELECT session_id,
             user_email,
@@ -437,9 +448,9 @@ router.post("/members/import", express.text({ type: "text/csv", limit: "1mb" }),
 // ── 5-hour session windows ──────────────────────────────────────────────────
 router.get("/stats/session-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
 
   const windows = query(db, `
     WITH ordered AS (
@@ -523,9 +534,9 @@ router.get("/stats/billing-summary", async (req, res) => {
 // ── 7-day weekly rolling windows ────────────────────────────────────────────
 router.get("/stats/weekly-windows", async (req, res) => {
   const db = await getDb();
-  const { from, to } = req.query;
+  const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
-  const wc = whereClause(from, to, audience);
+  const wc = whereClause(from, to, audience, source);
 
   // Group requests into 7-day (168-hour) rolling windows per user,
   // using same gap-based approach as 5-hour windows but with 7-day threshold
@@ -684,6 +695,58 @@ router.delete("/dashboard-users/:id", async (req, res) => {
   }
 });
 
+// ── Bedrock config & sync ───────────────────────────────────────────────────
+router.get("/bedrock/config", async (req, res) => {
+  try {
+    const cfg = await getBedrockConfig();
+    res.json({
+      region:              cfg.region || "",
+      logGroupName:        cfg.logGroupName || "",
+      pollIntervalMinutes: cfg.pollIntervalMinutes || 0,
+      lastSyncTime:        cfg.lastSyncTime || null,
+      hasCredentials:      !!(cfg.accessKeyId && cfg.secretAccessKey),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bedrock/config", async (req, res) => {
+  try {
+    const {
+      access_key_id,
+      secret_access_key,
+      session_token,
+      region,
+      log_group_name,
+      poll_interval_minutes,
+    } = req.body || {};
+
+    const updates = {};
+    if (region              !== undefined) updates.region              = region;
+    if (log_group_name      !== undefined) updates.logGroupName        = log_group_name;
+    if (poll_interval_minutes !== undefined) updates.pollIntervalMinutes = String(poll_interval_minutes);
+    if (access_key_id       !== undefined) updates.accessKeyId         = access_key_id;
+    if (secret_access_key   !== undefined) updates.secretAccessKey     = secret_access_key;
+    if (session_token       !== undefined) updates.sessionToken        = session_token;
+
+    await setBedrockConfig(updates);
+    await startBedrockPoller();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bedrock/sync", async (req, res) => {
+  try {
+    const result = await syncBedrockLogs();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Teams CRUD ──────────────────────────────────────────────────────────────
 router.get("/teams", async (req, res) => {
   const db = await getDb();
@@ -778,7 +841,9 @@ router.delete("/teams/:id/members/:email", async (req, res) => {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 // `audience` is either null (no user filter) or an array of emails.
 // Empty array means "filter to nobody" → emit 1=0 so the result is empty.
-function whereClause(from, to, audience) {
+// `source` filters api_requests.source ("anthropic"/"bedrock"/"claude_code"),
+// only when querying the api_requests table.
+function whereClause(from, to, audience, source, table = "api_requests") {
   const conds = [];
   const params = [];
   if (from) { conds.push("timestamp >= ?"); params.push(from); }
@@ -790,6 +855,14 @@ function whereClause(from, to, audience) {
     } else {
       conds.push(`user_email IN (${audience.map(() => "?").join(",")})`);
       params.push(...audience);
+    }
+  }
+
+  if (source && source !== "all" && table === "api_requests") {
+    if (source === "claude_code") {
+      conds.push("(source = 'claude_code' OR source IS NULL)");
+    } else {
+      conds.push("source = ?"); params.push(source);
     }
   }
 

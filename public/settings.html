@@ -295,6 +295,7 @@
       <button class="tab active" data-tab="plan">Plan</button>
       <button class="tab" data-tab="teams">Teams</button>
       <button class="tab" data-tab="users">Dashboard Users</button>
+      <button class="tab" data-tab="bedrock">AWS Bedrock</button>
     </div>
 
     <!-- ═══════════════════ PLAN TAB ═══════════════════ -->
@@ -377,6 +378,58 @@
       </div>
 
       <div id="teamsList"></div>
+    </div>
+
+    <!-- ═══════════════════ BEDROCK TAB ═══════════════════ -->
+    <div class="tab-content" id="tab-bedrock">
+      <div class="card">
+        <h2>AWS CloudWatch Logs</h2>
+        <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+          Configure an IAM user with <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">logs:FilterLogEvents</code> and
+          <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">logs:DescribeLogGroups</code> permissions
+          on your Bedrock invocation log group.
+          Enable <strong>model invocation logging</strong> in AWS Bedrock settings and point it to a CloudWatch log group first.
+        </p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>AWS Access Key ID</label>
+            <input type="password" id="bedrockKeyId" placeholder="AKIA...">
+          </div>
+          <div class="form-group">
+            <label>AWS Secret Access Key</label>
+            <input type="password" id="bedrockSecretKey" placeholder="(leave blank to keep existing)">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>AWS Region</label>
+            <input type="text" id="bedrockRegion" placeholder="us-east-1">
+          </div>
+          <div class="form-group">
+            <label>CloudWatch Log Group Name</label>
+            <input type="text" id="bedrockLogGroup" placeholder="/aws/bedrock/modelinvocations">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Background Poll Interval (minutes, 0 = manual only)</label>
+            <input type="number" id="bedrockPollInterval" value="0" min="0" step="5">
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end">
+            <div id="bedrockLastSync" style="font-size:12px;color:var(--text-dim);padding-bottom:4px">Last sync: never</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn" onclick="saveBedrockConfig()">Save Configuration</button>
+          <button class="btn btn-secondary" onclick="syncBedrockNow()" id="syncNowBtn">Sync Now</button>
+        </div>
+        <div class="status-msg" id="bedrockStatus"></div>
+      </div>
+
+      <div class="card">
+        <h2>Sync Status</h2>
+        <div id="bedrockSyncDetails" style="font-size:13px;color:var(--text-dim)">No sync has been run yet.</div>
+      </div>
     </div>
 
     <!-- ═══════════════════ USERS TAB ═══════════════════ -->
@@ -652,6 +705,82 @@
       if (e.key === 'Escape') closeEdit();
     });
 
+    // ── Bedrock config ───────────────────────────────────────
+    async function loadBedrockConfig() {
+      const data = await api('/bedrock/config');
+      if (!data) return;
+      document.getElementById('bedrockRegion').value = data.region || '';
+      document.getElementById('bedrockLogGroup').value = data.logGroupName || '';
+      document.getElementById('bedrockPollInterval').value = data.pollIntervalMinutes || 0;
+      document.getElementById('bedrockKeyId').placeholder =
+        data.hasCredentials ? 'AKIA**** (configured — leave blank to keep)' : 'AKIA...';
+      document.getElementById('bedrockSecretKey').placeholder =
+        data.hasCredentials ? '(configured — leave blank to keep)' : '(required)';
+      document.getElementById('bedrockLastSync').textContent =
+        data.lastSyncTime
+          ? 'Last sync: ' + new Date(data.lastSyncTime).toLocaleString()
+          : 'Last sync: never';
+    }
+
+    async function saveBedrockConfig() {
+      const body = {
+        region:               document.getElementById('bedrockRegion').value.trim(),
+        log_group_name:       document.getElementById('bedrockLogGroup').value.trim(),
+        poll_interval_minutes: parseInt(document.getElementById('bedrockPollInterval').value) || 0,
+      };
+      const keyId  = document.getElementById('bedrockKeyId').value.trim();
+      const secret = document.getElementById('bedrockSecretKey').value.trim();
+      if (keyId)   body.access_key_id    = keyId;
+      if (secret)  body.secret_access_key = secret;
+
+      try {
+        const res = await fetch('/api/bedrock/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        const data = await res.json();
+        if (data.ok) {
+          showStatus('bedrockStatus', 'Configuration saved!', true);
+          document.getElementById('bedrockKeyId').value = '';
+          document.getElementById('bedrockSecretKey').value = '';
+          loadBedrockConfig();
+        } else {
+          showStatus('bedrockStatus', data.error || 'Save failed', false);
+        }
+      } catch (err) {
+        showStatus('bedrockStatus', 'Error: ' + err.message, false);
+      }
+    }
+
+    async function syncBedrockNow() {
+      const btn = document.getElementById('syncNowBtn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      showStatus('bedrockStatus', 'Syncing…', true);
+      try {
+        const res = await fetch('/api/bedrock/sync', { method: 'POST' });
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        const data = await res.json();
+        if (data.ok) {
+          const msg = `Sync complete: ${data.inserted} inserted, ${data.skipped} skipped`;
+          showStatus('bedrockStatus', msg, true);
+          document.getElementById('bedrockSyncDetails').textContent = msg;
+          loadBedrockConfig();
+        } else {
+          const errDetail = data.errors?.length ? data.errors[0] : (data.error || 'unknown error');
+          showStatus('bedrockStatus', 'Sync failed: ' + errDetail, false);
+          document.getElementById('bedrockSyncDetails').textContent = 'Last sync failed: ' + errDetail;
+        }
+      } catch (err) {
+        showStatus('bedrockStatus', 'Error: ' + err.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync Now';
+      }
+    }
+
     // ── Ingest token (read-only) ────────────────────────────
     async function loadIngestToken() {
       const data = await api('/ingest-token');
@@ -785,6 +914,7 @@
     // ── Init ────────────────────────────────────────────────
     loadPlanConfig();
     loadUsers();
+    loadBedrockConfig();
     loadIngestToken();
   </script>
 </body>
