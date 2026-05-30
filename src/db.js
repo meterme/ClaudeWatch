@@ -136,6 +136,10 @@ function migrate(db) {
       billing_cycle_day         INTEGER NOT NULL DEFAULT 1,
       standard_seat_cost_usd    REAL NOT NULL DEFAULT 20.0,
       premium_seat_cost_usd     REAL NOT NULL DEFAULT 100.0,
+      commitment_amount_usd     REAL,
+      commitment_start_date     TEXT,
+      commitment_end_date       TEXT,
+      commitment_discount_pct   REAL NOT NULL DEFAULT 0,
       created_at                TEXT NOT NULL,
       updated_at                TEXT NOT NULL
     )
@@ -144,6 +148,18 @@ function migrate(db) {
   // Add new columns if upgrading from previous schema (ignore errors if already exist)
   try { db.run(`ALTER TABLE plan_config ADD COLUMN standard_seat_cost_usd REAL NOT NULL DEFAULT 20.0`); } catch (_) {}
   try { db.run(`ALTER TABLE plan_config ADD COLUMN premium_seat_cost_usd REAL NOT NULL DEFAULT 100.0`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN commitment_amount_usd REAL`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN commitment_start_date TEXT`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN commitment_end_date TEXT`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN commitment_discount_pct REAL NOT NULL DEFAULT 0`); } catch (_) {}
+  // Per-tier overage model: included_usd is the $ of list-price API value
+  // included in the seat (NULL → defaults to the base seat cost). overage_pct
+  // is the % of list price applied above the included cap (0 = rate-limited,
+  // 100 = full list spillover, anything in between = negotiated discount).
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN standard_seat_included_usd REAL`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN standard_seat_overage_pct REAL NOT NULL DEFAULT 0`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN premium_seat_included_usd REAL`); } catch (_) {}
+  try { db.run(`ALTER TABLE plan_config ADD COLUMN premium_seat_overage_pct REAL NOT NULL DEFAULT 0`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS org_members (
@@ -152,9 +168,11 @@ function migrate(db) {
       role          TEXT,
       status        TEXT,
       seat_tier     TEXT,
+      billing_model TEXT NOT NULL DEFAULT 'seat',
       imported_at   TEXT NOT NULL
     )
   `);
+  try { db.run(`ALTER TABLE org_members ADD COLUMN billing_model TEXT NOT NULL DEFAULT 'seat'`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS dashboard_users (

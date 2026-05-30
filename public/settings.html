@@ -307,22 +307,81 @@
             <input type="number" id="setBillingDay" value="1" min="1" max="28">
           </div>
           <div class="form-group">
+            <label>Anthropic Admin API Key</label>
+            <input type="password" id="setAdminApiKey" placeholder="sk-ant-admin-...">
+          </div>
+        </div>
+
+        <div style="color:var(--text-dim);font-size:13px;margin:18px 0 8px">
+          <strong style="color:var(--text)">Seat tiers.</strong>
+          Cost = base + <em>max(0, list value − included)</em> × overage %.
+          Set overage to <strong>0%</strong> for rate-limited plans (Pro/Max — no extra billing),
+          <strong>100%</strong> for plans that charge full list above the cap (Team / API spillover),
+          or somewhere in between if you negotiated a discount.
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
             <label>Standard Seat Cost ($/mo)</label>
             <input type="number" id="setStandardCost" value="20" min="0" step="0.01">
           </div>
+          <div class="form-group">
+            <label>Standard Included Value ($/mo)</label>
+            <input type="number" id="setStandardIncluded" placeholder="defaults to seat cost" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label>Standard Overage Rate (%)</label>
+            <input type="number" id="setStandardOverage" value="0" min="0" max="100" step="0.01">
+          </div>
         </div>
+
         <div class="form-row">
           <div class="form-group">
             <label>Premium Seat Cost ($/mo)</label>
             <input type="number" id="setPremiumCost" value="100" min="0" step="0.01">
           </div>
           <div class="form-group">
-            <label>Anthropic Admin API Key</label>
-            <input type="password" id="setAdminApiKey" placeholder="sk-ant-admin-...">
+            <label>Premium Included Value ($/mo)</label>
+            <input type="number" id="setPremiumIncluded" placeholder="defaults to seat cost" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label>Premium Overage Rate (%)</label>
+            <input type="number" id="setPremiumOverage" value="0" min="0" max="100" step="0.01">
           </div>
         </div>
+
         <button class="btn" onclick="savePlanConfig()">Save Configuration</button>
         <div class="status-msg" id="planStatus"></div>
+      </div>
+
+      <div class="card">
+        <h2>Enterprise Commitment</h2>
+        <div style="color:var(--text-dim);font-size:13px;margin-bottom:12px">
+          Track a pooled $ usage commitment for users on your enterprise contract. Users
+          must be marked as <strong>enterprise</strong> below (or via the CSV column
+          <em>Billing Model</em>) to count toward this pool. Leave the amount blank to
+          disable.
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Commitment Amount ($)</label>
+            <input type="number" id="setCommitAmount" placeholder="e.g. 50000" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label>Discount vs. list price (%)</label>
+            <input type="number" id="setCommitDiscount" value="0" min="0" max="100" step="0.01">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Commitment Start</label>
+            <input type="date" id="setCommitStart">
+          </div>
+          <div class="form-group">
+            <label>Commitment End</label>
+            <input type="date" id="setCommitEnd">
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -348,11 +407,14 @@
       </div>
 
       <div class="card" id="membersCard" style="display:none">
-        <h2>Imported Members <span id="membersCount" style="font-weight:normal;text-transform:none;letter-spacing:0"></span></h2>
+        <h2>Users &amp; Billing Model <span id="membersCount" style="font-weight:normal;text-transform:none;letter-spacing:0"></span></h2>
+        <div style="color:var(--text-dim);font-size:13px;margin-bottom:8px">
+          Rows marked <em>telemetry</em> appeared in usage data but were never CSV-imported — you can still flip them to Enterprise. CSV re-imports populate Name/Tier/Status.
+        </div>
         <div style="max-height:400px;overflow-y:auto">
           <table>
             <thead>
-              <tr><th>Name</th><th>Email</th><th>Tier</th><th>Status</th></tr>
+              <tr><th>Name</th><th>Email</th><th>Source</th><th>Tier</th><th>Billing Model</th><th>Status</th></tr>
             </thead>
             <tbody id="membersBody"></tbody>
           </table>
@@ -484,6 +546,14 @@
         document.getElementById('setBillingDay').value = data.plan.billing_cycle_day || 1;
         document.getElementById('setStandardCost').value = data.plan.standard_seat_cost_usd || 20;
         document.getElementById('setPremiumCost').value = data.plan.premium_seat_cost_usd || 100;
+        document.getElementById('setStandardIncluded').value = data.plan.standard_seat_included_usd ?? '';
+        document.getElementById('setStandardOverage').value = data.plan.standard_seat_overage_pct ?? 0;
+        document.getElementById('setPremiumIncluded').value = data.plan.premium_seat_included_usd ?? '';
+        document.getElementById('setPremiumOverage').value = data.plan.premium_seat_overage_pct ?? 0;
+        document.getElementById('setCommitAmount').value = data.plan.commitment_amount_usd ?? '';
+        document.getElementById('setCommitDiscount').value = data.plan.commitment_discount_pct ?? 0;
+        document.getElementById('setCommitStart').value = (data.plan.commitment_start_date || '').slice(0, 10);
+        document.getElementById('setCommitEnd').value = (data.plan.commitment_end_date || '').slice(0, 10);
       }
       document.getElementById('setAdminApiKey').value = '';
       document.getElementById('setAdminApiKey').placeholder =
@@ -492,10 +562,21 @@
     }
 
     async function savePlanConfig() {
+      const commitAmount = document.getElementById('setCommitAmount').value.trim();
+      const stdInc = document.getElementById('setStandardIncluded').value.trim();
+      const premInc = document.getElementById('setPremiumIncluded').value.trim();
       const body = {
         billing_cycle_day: parseInt(document.getElementById('setBillingDay').value) || 1,
         standard_seat_cost_usd: parseFloat(document.getElementById('setStandardCost').value) || 20,
         premium_seat_cost_usd: parseFloat(document.getElementById('setPremiumCost').value) || 100,
+        standard_seat_included_usd: stdInc === '' ? null : parseFloat(stdInc),
+        standard_seat_overage_pct: parseFloat(document.getElementById('setStandardOverage').value) || 0,
+        premium_seat_included_usd: premInc === '' ? null : parseFloat(premInc),
+        premium_seat_overage_pct: parseFloat(document.getElementById('setPremiumOverage').value) || 0,
+        commitment_amount_usd: commitAmount === '' ? null : parseFloat(commitAmount),
+        commitment_discount_pct: parseFloat(document.getElementById('setCommitDiscount').value) || 0,
+        commitment_start_date: document.getElementById('setCommitStart').value || null,
+        commitment_end_date: document.getElementById('setCommitEnd').value || null,
       };
       const apiKey = document.getElementById('setAdminApiKey').value.trim();
       if (apiKey) body.admin_api_key = apiKey;
@@ -538,14 +619,63 @@
     function renderMembers(members) {
       document.getElementById('membersCard').style.display = '';
       document.getElementById('membersCount').textContent = `(${members.length})`;
-      const tierColor = t => t?.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)';
-      document.getElementById('membersBody').innerHTML = members.map(m => `
+      const sourceLabel = s => s === 'telemetry'
+        ? '<span style="color:var(--text-dim);font-size:11px">telemetry</span>'
+        : '<span style="color:var(--cyan);font-size:11px">CSV</span>';
+      document.getElementById('membersBody').innerHTML = members.map(m => {
+        const model = (m.billing_model || 'seat').toLowerCase();
+        const tier = (m.seat_tier && ['standard','premium'].includes(m.seat_tier.toLowerCase()))
+          ? m.seat_tier.charAt(0).toUpperCase() + m.seat_tier.slice(1).toLowerCase()
+          : 'Standard';
+        const tierDisabled = model === 'enterprise' ? 'disabled' : '';
+        return `
         <tr>
           <td>${escHtml(m.name || '—')}</td>
           <td style="color:var(--text-dim)">${escHtml(m.email)}</td>
-          <td style="color:${tierColor(m.seat_tier)}">${m.seat_tier || '—'}</td>
+          <td>${sourceLabel(m.source)}</td>
+          <td>
+            <select data-member-email="${escHtml(m.email)}" data-field="seat_tier"
+                    onchange="updateMemberField(this)" ${tierDisabled}>
+              <option value="Standard"${tier === 'Standard' ? ' selected' : ''}>Standard</option>
+              <option value="Premium"${tier === 'Premium' ? ' selected' : ''}>Premium</option>
+            </select>
+          </td>
+          <td>
+            <select data-member-email="${escHtml(m.email)}" data-field="billing_model"
+                    onchange="updateMemberField(this)">
+              <option value="seat"${model === 'seat' ? ' selected' : ''}>Seat</option>
+              <option value="enterprise"${model === 'enterprise' ? ' selected' : ''}>Enterprise</option>
+            </select>
+          </td>
           <td>${m.status || '—'}</td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
+    }
+
+    async function updateMemberField(selectEl) {
+      const email = selectEl.dataset.memberEmail;
+      const field = selectEl.dataset.field;
+      const value = selectEl.value;
+      const prev = selectEl.dataset.prev || '';
+      try {
+        const res = await fetch('/api/members/' + encodeURIComponent(email), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: value }),
+        });
+        if (!res.ok) throw new Error((await res.json())?.error || 'Update failed');
+        selectEl.dataset.prev = value;
+
+        // When billing_model flips, enable/disable the sibling Tier dropdown
+        if (field === 'billing_model') {
+          const row = selectEl.closest('tr');
+          const tierSel = row?.querySelector('select[data-field="seat_tier"]');
+          if (tierSel) tierSel.disabled = (value === 'enterprise');
+        }
+      } catch (err) {
+        if (prev) selectEl.value = prev;
+        alert(`Could not update ${field}: ` + err.message);
+      }
     }
 
     // ── Dashboard users ─────────────────────────────────────
