@@ -452,35 +452,15 @@ router.get("/stats/session-windows", async (req, res) => {
   const audience = await parseAudience(db, req);
   const wc = whereClause(from, to, audience, source);
 
-  const windows = query(db, `
-    WITH ordered AS (
-      SELECT timestamp, user_email, cost_usd, input_tokens, output_tokens,
-        ROUND((julianday(timestamp) - julianday(
-          LAG(timestamp) OVER (PARTITION BY user_email ORDER BY timestamp)
-        )) * 86400) AS gap_seconds
-      FROM api_requests ${wc.sql}
-    ),
-    windowed AS (
-      SELECT *,
-        SUM(CASE WHEN gap_seconds IS NULL OR gap_seconds > 18000 THEN 1 ELSE 0 END)
-          OVER (PARTITION BY user_email ORDER BY timestamp) AS window_id
-      FROM ordered
-    )
-    SELECT user_email, window_id,
-      MIN(timestamp) AS window_start, MAX(timestamp) AS window_end,
-      COUNT(*) AS request_count,
-      ROUND(SUM(cost_usd), 6) AS total_cost,
-      SUM(input_tokens) AS total_input_tokens,
-      SUM(output_tokens) AS total_output_tokens,
-      SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens,
-      ROUND((julianday(MAX(timestamp)) - julianday(MIN(timestamp))) * 24, 4) AS duration_hours
-    FROM windowed
-    GROUP BY user_email, window_id
-    ORDER BY window_start DESC
-  `, wc.params);
+  // Roll requests up to 5-hour (18000s) gap-based windows per user, then
+  // aggregate those windows to per-user totals — all in SQL. We deliberately
+  // do NOT return the raw per-window rows (thousands of them); the dashboard
+  // only needs per-user rollups + a global summary, so shipping every window
+  // is what previously ballooned memory and payload size.
+  const perUser = query(db, windowStatsSql(wc.sql, 18000), wc.params);
 
-  await maskRows(windows);
-  res.json(computeSessionWindowStats(windows));
+  await maskRows(perUser);
+  res.json({ summary: computeWindowSummary(perUser), per_user: perUser });
 });
 
 // ── Billing period summary (informational, no overage guessing) ─────────────
@@ -538,37 +518,12 @@ router.get("/stats/weekly-windows", async (req, res) => {
   const audience = await parseAudience(db, req);
   const wc = whereClause(from, to, audience, source);
 
-  // Group requests into 7-day (168-hour) rolling windows per user,
-  // using same gap-based approach as 5-hour windows but with 7-day threshold
-  const windows = query(db, `
-    WITH ordered AS (
-      SELECT timestamp, user_email, cost_usd, input_tokens, output_tokens,
-        ROUND((julianday(timestamp) - julianday(
-          LAG(timestamp) OVER (PARTITION BY user_email ORDER BY timestamp)
-        )) * 86400) AS gap_seconds
-      FROM api_requests ${wc.sql}
-    ),
-    windowed AS (
-      SELECT *,
-        SUM(CASE WHEN gap_seconds IS NULL OR gap_seconds > 604800 THEN 1 ELSE 0 END)
-          OVER (PARTITION BY user_email ORDER BY timestamp) AS window_id
-      FROM ordered
-    )
-    SELECT user_email, window_id,
-      MIN(timestamp) AS window_start, MAX(timestamp) AS window_end,
-      COUNT(*) AS request_count,
-      ROUND(SUM(cost_usd), 6) AS total_cost,
-      SUM(input_tokens) AS total_input_tokens,
-      SUM(output_tokens) AS total_output_tokens,
-      SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens,
-      ROUND((julianday(MAX(timestamp)) - julianday(MIN(timestamp))) * 24, 4) AS duration_hours
-    FROM windowed
-    GROUP BY user_email, window_id
-    ORDER BY window_start DESC
-  `, wc.params);
+  // Same gap-based approach as the 5-hour windows but with a 7-day (604800s)
+  // threshold, aggregated to per-user totals in SQL (see session-windows note).
+  const perUser = query(db, windowStatsSql(wc.sql, 604800), wc.params);
 
-  await maskRows(windows);
-  res.json(computeSessionWindowStats(windows));
+  await maskRows(perUser);
+  res.json({ summary: computeWindowSummary(perUser), per_user: perUser });
 });
 
 // ── Admin API proxies ───────────────────────────────────────────────────────
@@ -944,39 +899,71 @@ function getBillingPeriod(cycleDayOfMonth) {
   };
 }
 
-function computeSessionWindowStats(windows) {
-  if (windows.length === 0) {
-    return { windows: [], summary: {
-      total_windows: 0, avg_cost_per_window: 0, avg_tokens_per_window: 0,
-      avg_requests_per_window: 0, avg_duration_hours: 0,
-      avg_cost_per_active_hour: null, total_cost: 0, total_active_hours: 0,
-    }};
+// Build the gap-based windowing query for a given gap threshold (seconds),
+// rolled up to ONE ROW PER USER. The inner per_window CTE groups requests into
+// windows (a new window starts whenever the gap since the previous request for
+// that user exceeds gapSeconds); the outer select then aggregates each user's
+// windows into the rollup the dashboard actually consumes.
+function windowStatsSql(whereSql, gapSeconds) {
+  return `
+    WITH ordered AS (
+      SELECT timestamp, user_email, cost_usd, input_tokens, output_tokens,
+        ROUND((julianday(timestamp) - julianday(
+          LAG(timestamp) OVER (PARTITION BY user_email ORDER BY timestamp)
+        )) * 86400) AS gap_seconds
+      FROM api_requests ${whereSql}
+    ),
+    windowed AS (
+      SELECT *,
+        SUM(CASE WHEN gap_seconds IS NULL OR gap_seconds > ${gapSeconds} THEN 1 ELSE 0 END)
+          OVER (PARTITION BY user_email ORDER BY timestamp) AS window_id
+      FROM ordered
+    ),
+    per_window AS (
+      SELECT user_email, window_id,
+        SUM(cost_usd) AS total_cost,
+        SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS total_tokens,
+        COUNT(*) AS request_count,
+        (julianday(MAX(timestamp)) - julianday(MIN(timestamp))) * 24 AS duration_hours
+      FROM windowed
+      GROUP BY user_email, window_id
+    )
+    SELECT user_email,
+      COUNT(*) AS window_count,
+      ROUND(SUM(total_cost), 6) AS total_cost,
+      SUM(total_tokens) AS total_tokens,
+      SUM(request_count) AS total_requests,
+      ROUND(SUM(duration_hours), 4) AS total_hours
+    FROM per_window
+    GROUP BY user_email
+    ORDER BY total_cost DESC
+  `;
+}
+
+// Derive the global summary from the per-user rollups (≈55 rows). Note that
+// active-hours and total-hours are identical here: zero-duration windows
+// contribute 0 either way, so there's no need to track them separately.
+function computeWindowSummary(perUser) {
+  let totalWindows = 0, totalCost = 0, totalTokens = 0, totalRequests = 0, totalActiveHours = 0;
+  for (const u of perUser) {
+    totalWindows += u.window_count || 0;
+    totalCost += u.total_cost || 0;
+    totalTokens += u.total_tokens || 0;
+    totalRequests += u.total_requests || 0;
+    totalActiveHours += u.total_hours || 0;
   }
-
-  const n = windows.length;
-  const totalCost = windows.reduce((s, w) => s + (w.total_cost || 0), 0);
-  const totalTokens = windows.reduce((s, w) => s + (w.total_tokens || 0), 0);
-  const totalRequests = windows.reduce((s, w) => s + w.request_count, 0);
-  const totalActiveHours = windows.reduce((s, w) => s + (w.duration_hours || 0), 0);
-
-  const activeHoursForVelocity = windows
-    .filter(w => w.duration_hours > 0)
-    .reduce((s, w) => s + w.duration_hours, 0);
-
+  const n = totalWindows;
   return {
-    windows,
-    summary: {
-      total_windows: n,
-      avg_cost_per_window: totalCost / n,
-      avg_tokens_per_window: Math.round(totalTokens / n),
-      avg_requests_per_window: Math.round(totalRequests / n),
-      avg_duration_hours: Math.round((totalActiveHours / n) * 100) / 100,
-      avg_cost_per_active_hour: activeHoursForVelocity > 0
-        ? Math.round((totalCost / activeHoursForVelocity) * 100) / 100
-        : null,
-      total_cost: Math.round(totalCost * 100) / 100,
-      total_active_hours: Math.round(totalActiveHours * 100) / 100,
-    },
+    total_windows: n,
+    avg_cost_per_window: n ? totalCost / n : 0,
+    avg_tokens_per_window: n ? Math.round(totalTokens / n) : 0,
+    avg_requests_per_window: n ? Math.round(totalRequests / n) : 0,
+    avg_duration_hours: n ? Math.round((totalActiveHours / n) * 100) / 100 : 0,
+    avg_cost_per_active_hour: totalActiveHours > 0
+      ? Math.round((totalCost / totalActiveHours) * 100) / 100
+      : null,
+    total_cost: Math.round(totalCost * 100) / 100,
+    total_active_hours: Math.round(totalActiveHours * 100) / 100,
   };
 }
 

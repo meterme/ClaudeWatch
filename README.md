@@ -17,6 +17,16 @@ To populate with 30 days of demo data:
 SEED_DEMO=1 npm start
 ```
 
+### Native dependency note
+
+Storage uses [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), a native
+module. In the common case `npm install` downloads a prebuilt binary for your
+platform/Node version — **no OS-level setup required** (macOS x64/arm64, Linux
+x64/arm64 glibc + musl, Windows). If no prebuilt binary matches your Node ABI, npm
+falls back to compiling from source, which needs a C++ toolchain: Xcode Command Line
+Tools on macOS (`xcode-select --install`), or `build-essential` + `python3` on Linux.
+Sticking to an active LTS Node release is the surest way to get a prebuilt binary.
+
 ## Connecting Claude Code
 
 Configure your team's Claude Code instances to export telemetry to this server. Set these environment variables (or add them to your managed settings):

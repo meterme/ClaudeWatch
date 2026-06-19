@@ -1,4 +1,4 @@
-const initSQL = require("sql.js");
+const Database = require("better-sqlite3");
 const fs = require("fs");
 const path = require("path");
 
@@ -6,29 +6,104 @@ const DB_PATH = path.join(__dirname, "..", "data", "usage.db");
 
 let db = null;
 
-async function getDb() {
+// ── sql.js compatibility shim ────────────────────────────────────────────────
+// The codebase was written against sql.js's statement API (db.run(sql, params),
+// db.prepare(sql) → { bind, step, getAsObject, free }). better-sqlite3 has a
+// different, native API. Rather than rewrite ~130 call sites, we wrap a
+// better-sqlite3 Database so the existing API keeps working — the real win is
+// that queries now execute natively against an on-disk file instead of running
+// inside a full copy of the DB held in the V8 heap (sql.js's model, which was
+// the source of the memory exhaustion).
+
+// better-sqlite3 is strict about bound values: it throws on undefined and
+// booleans, whereas sql.js silently coerced them. Normalize to match the old
+// lenient behaviour so existing inserts don't start throwing.
+function normParams(params) {
+  if (params == null) return [];
+  return params.map((p) => {
+    if (p === undefined) return null;
+    if (typeof p === "boolean") return p ? 1 : 0;
+    return p;
+  });
+}
+
+class StmtShim {
+  constructor(stmt) {
+    this._stmt = stmt;
+    this._params = [];
+    this._rows = null;
+    this._i = 0;
+    this._row = undefined;
+  }
+  bind(params) {
+    this._params = normParams(params);
+    this._rows = null;
+    this._i = 0;
+    return true;
+  }
+  // Materialize on first step (sql.js materialized results too). Using .all()
+  // rather than .iterate() avoids leaving the connection in a "busy" state when
+  // callers step once and free without exhausting the cursor.
+  step() {
+    if (this._rows === null) { this._rows = this._stmt.all(...this._params); this._i = 0; }
+    if (this._i >= this._rows.length) { this._row = undefined; return false; }
+    this._row = this._rows[this._i++];
+    return true;
+  }
+  getAsObject() { return this._row || {}; }
+  free() { this._rows = null; this._i = 0; }
+}
+
+class DbShim {
+  constructor(real) {
+    this._db = real;
+    this._runCache = new Map(); // cache write statements by SQL (reused in loops)
+  }
+  prepare(sql) { return new StmtShim(this._db.prepare(sql)); }
+  run(sql, params = []) {
+    let stmt = this._runCache.get(sql);
+    if (!stmt) { stmt = this._db.prepare(sql); this._runCache.set(sql, stmt); }
+    stmt.run(...normParams(params));
+    return this;
+  }
+  // sql.js-style exec(): returns [] when there are no result rows, otherwise
+  // [{ columns, values }] (one entry per result-bearing statement). Callers
+  // check `res.length` / `res[0].values.length`, so both shapes are handled.
+  exec(sql, params = []) {
+    let stmt;
+    try {
+      stmt = this._db.prepare(sql);
+    } catch (_) {
+      // Multi-statement / DDL that prepare() rejects: run natively, no results.
+      this._db.exec(sql);
+      return [];
+    }
+    if (!stmt.reader) { stmt.run(...normParams(params)); return []; }
+    const columns = stmt.columns().map((c) => c.name);
+    const values = stmt.raw().all(...normParams(params));
+    return values.length ? [{ columns, values }] : [];
+  }
+  pragma(...args) { return this._db.pragma(...args); }
+}
+
+function getDb() {
   if (db) return db;
 
-  const SQL = await initSQL();
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  if (fs.existsSync(DB_PATH)) {
-    const buf = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(buf);
-  } else {
-    db = new SQL.Database();
-  }
+  const real = new Database(DB_PATH);
+  real.pragma("journal_mode = WAL");   // concurrent reads, durable writes
+  real.pragma("synchronous = NORMAL");
+  db = new DbShim(real);
 
   migrate(db);
   return db;
 }
 
-function persist() {
-  if (!db) return;
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
+// better-sqlite3 writes to disk on every statement, so there's nothing to flush.
+// Kept as a no-op so existing `persist()` call sites don't need to change.
+function persist() {}
 
 function migrate(db) {
   db.run(`
@@ -228,6 +303,11 @@ function migrate(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_source ON api_requests(source)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_user_aliases_alias ON user_aliases(alias)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(user_email)`);
+  // Session-detail / join paths (/sessions/:id stitches these tables by id)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_session ON api_requests(session_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_api_req_prompt ON api_requests(prompt_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_prompts_session ON user_prompts(session_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id)`);
 
   persist();
 }
