@@ -291,6 +291,21 @@
 
     th[data-tip]:hover::after { opacity: 1; }
 
+    .event-filter-row th { padding: 4px 8px; vertical-align: top; }
+    .event-filter {
+      width: 100%;
+      max-width: 220px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      padding: 3px 4px;
+      border-radius: 4px;
+    }
+
     td {
       padding: 8px 12px;
       border-bottom: 1px solid var(--border);
@@ -558,6 +573,7 @@
         <option value="all">All</option>
         <option value="claude_code">Claude Code</option>
         <option value="bedrock">Bedrock</option>
+        <option value="opencode">OpenCode</option>
       </select>
       <button onclick="refresh()">Apply</button>
       <a class="gear-btn" href="/settings.html" title="Settings">
@@ -638,8 +654,17 @@
             <th data-tip="When this event was recorded">Time</th>
             <th data-tip="Event category: api_request, tool_use, prompt, or error">Type</th>
             <th data-tip="User who triggered the event">User</th>
-            <th data-tip="Model name, tool name, or error message depending on event type">Detail</th>
+            <th data-tip="Model used (API requests)">Model</th>
+            <th data-tip="Tool name or error message (non-request events)">Detail</th>
             <th data-tip="Token count and cost for API requests; duration for tool calls; prompt length for prompts">Value</th>
+          </tr>
+          <tr class="event-filter-row">
+            <th></th>
+            <th><select id="efType" class="event-filter" onchange="renderEventRows()"><option value="">All</option></select></th>
+            <th><select id="efUser" class="event-filter" onchange="renderEventRows()"><option value="">All</option></select></th>
+            <th><select id="efModel" class="event-filter" onchange="renderEventRows()"><option value="">All</option></select></th>
+            <th><select id="efDetail" class="event-filter" onchange="renderEventRows()"><option value="">All</option></select></th>
+            <th></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -1240,14 +1265,48 @@
       }).join('');
     }
 
+    // Per-column filters for the Recent Events table. Each accessor returns the
+    // value for that column (or null when not applicable); dropdown options are
+    // derived from the events currently loaded (i.e. the active context window).
+    let eventCache = [];
+    const EVENT_FILTERS = [
+      { id: 'efType',   get: e => e.type || null },
+      { id: 'efUser',   get: e => e.user_email || null },
+      { id: 'efModel',  get: e => e.type === 'api_request' ? (e.model || null) : null },
+      { id: 'efDetail', get: e => e.type === 'api_request' ? null : (e.model || null) },
+    ];
+
     function renderEventTable(data) {
+      eventCache = Array.isArray(data) ? data : [];
+      // Repopulate each filter's options from the current data, preserving the
+      // user's selection when that value still exists.
+      for (const f of EVENT_FILTERS) {
+        const sel = document.getElementById(f.id);
+        if (!sel) continue;
+        const cur = sel.value;
+        const vals = [...new Set(eventCache.map(f.get).filter(v => v != null && v !== ''))].sort();
+        sel.innerHTML = '<option value="">All</option>'
+          + vals.map(v => `<option value="${escapeAttr(v)}">${escapeHtml(v)}</option>`).join('');
+        sel.value = vals.includes(cur) ? cur : '';
+      }
+      renderEventRows();
+    }
+
+    function renderEventRows() {
+      const active = EVENT_FILTERS
+        .map(f => ({ get: f.get, val: (document.getElementById(f.id) || {}).value || '' }))
+        .filter(a => a.val);
+      const rows = eventCache.filter(e => active.every(a => String(a.get(e) ?? '') === a.val));
+
       const tbody = document.querySelector('#eventTable tbody');
       const tagClass = { api_request: 'tag-req', tool_use: 'tag-tool', error: 'tag-err', prompt: 'tag-prompt' };
-      tbody.innerHTML = data.slice(0, 100).map(e => {
+      tbody.innerHTML = rows.slice(0, 100).map(e => {
         const ts = new Date(e.timestamp).toLocaleString();
         const cls = tagClass[e.type] || 'tag-req';
         const sourceBadge = e.source === 'bedrock'
           ? ' <span class="tag" style="background:#f59e0b22;color:var(--orange)">bedrock</span>'
+          : e.source === 'opencode'
+          ? ' <span class="tag" style="background:#22c55e22;color:var(--green)">opencode</span>'
           : '';
         let valueCell;
         if (e.type === 'api_request') {
@@ -1260,7 +1319,8 @@
           <td style="white-space:nowrap">${ts}</td>
           <td><span class="tag ${cls}">${e.type}</span>${sourceBadge}</td>
           <td>${e.user_email || '—'}</td>
-          <td>${e.model || '—'}</td>
+          <td>${e.type === 'api_request' ? (e.model || '—') : '—'}</td>
+          <td>${e.type === 'api_request' ? '—' : (e.model || '—')}</td>
           <td>${valueCell}</td>
         </tr>`;
       }).join('');
