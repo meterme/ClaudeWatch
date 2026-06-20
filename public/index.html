@@ -1038,17 +1038,16 @@
     }
 
     function renderUserTable(data, sessionWindows, billing, adminCost) {
-      // Build per-user window stats from session window data
+      // Build per-user window stats from the pre-aggregated session-window
+      // rollups (one row per user, computed server-side).
       const userWindowStats = {};
-      if (sessionWindows?.windows) {
-        for (const w of sessionWindows.windows) {
-          if (!userWindowStats[w.user_email]) {
-            userWindowStats[w.user_email] = { count: 0, totalCost: 0, totalHours: 0 };
-          }
-          const s = userWindowStats[w.user_email];
-          s.count++;
-          s.totalCost += w.total_cost || 0;
-          s.totalHours += w.duration_hours || 0;
+      if (sessionWindows?.per_user) {
+        for (const u of sessionWindows.per_user) {
+          userWindowStats[u.user_email] = {
+            count: u.window_count || 0,
+            totalCost: u.total_cost || 0,
+            totalHours: u.total_hours || 0,
+          };
         }
       }
 
