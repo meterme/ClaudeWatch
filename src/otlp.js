@@ -40,8 +40,9 @@ async function ingestOtlpLogs(payload) {
           rec.observedTimeUnixNano || rec.observed_time_unix_nano
         );
 
-        if (eventName === "claude_code.api_request") {
-          console.log("[otlp-debug] api_request attrs:", JSON.stringify(attrs, null, 2));
+        if (eventName === "claude_code.api_request" || eventName === "api_request") {
+          console.log("[otlp-debug]", attrs["service.name"], "api_request — user.email:",
+            attrs["user.email"] ?? "(none)", "| keys:", JSON.stringify(Object.keys(attrs)));
         }
         if (isObscureMode() && attrs["user.email"]) {
           await assignAliasIfMissing(attrs["user.email"]);
@@ -88,8 +89,36 @@ function insertEvent(db, eventName, ts, a) {
     org_id: a["organization.id"] || null,
   };
 
-  switch (eventName) {
-    case "claude_code.api_request":
+  // Canonicalize the event name so both Claude Code's prefixed events
+  // (claude_code.api_request) and other OTLP clients' bare events (api_request,
+  // e.g. the @devtheops/opencode-plugin-otel plugin) route to the same tables.
+  const ev = (eventName || "").replace(/^claude_code\./, "");
+  // Attribute the row to the emitting agent via the OTLP service.name resource
+  // attribute (claude-code → claude_code, opencode → opencode); default to
+  // claude_code for older payloads that predate this.
+  const source = a["service.name"] ? a["service.name"].replace(/-/g, "_") : "claude_code";
+
+  switch (ev) {
+    case "api_request": {
+      // Generous fallback chains so we capture usage from both Claude Code and
+      // the OpenCode plugin, whose attribute names differ. The trailing
+      // tokens.* / bare input|output candidates are best-effort guesses for the
+      // OpenCode plugin's schema; the warning below reveals the real keys if
+      // they don't match so the chains can be tightened.
+      const model = a["gen_ai.request.model"] || a["model"] || a["modelID"] || a["model_id"] || null;
+      const cost = toNum(a["cost_usd"] ?? a["cost"] ?? a["cost.usd"] ?? a["claude_code.cost.usage"]);
+      const inputTokens = toInt(a["gen_ai.usage.input_tokens"] ?? a["input_tokens"] ?? a["llm.usage.prompt_tokens"] ?? a["gen_ai.usage.prompt_tokens"] ?? a["tokens.input"] ?? a["input"]);
+      const outputTokens = toInt(a["gen_ai.usage.output_tokens"] ?? a["output_tokens"] ?? a["llm.usage.completion_tokens"] ?? a["gen_ai.usage.completion_tokens"] ?? a["tokens.output"] ?? a["output"]);
+      const cacheReadTokens = toInt(a["cache_read_input_tokens"] ?? a["gen_ai.usage.cache_read_input_tokens"] ?? a["cache_read_tokens"] ?? a["tokens.cacheRead"]);
+      const cacheCreationTokens = toInt(a["cache_creation_input_tokens"] ?? a["gen_ai.usage.cache_creation_input_tokens"] ?? a["cache_creation_tokens"] ?? a["tokens.cacheCreation"]);
+      const durationMs = toInt(a["duration_ms"] ?? a["duration"]);
+
+      // If an api_request carries no usage at all, surface the attribute keys so
+      // we can map a new client's schema (one line, only on the miss).
+      if (cost == null && inputTokens == null && outputTokens == null) {
+        console.warn("[otlp] api_request with no usage from", source, "— keys:", JSON.stringify(Object.keys(a)));
+      }
+
       db.run(
         `INSERT INTO api_requests
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
@@ -97,7 +126,7 @@ function insertEvent(db, eventName, ts, a) {
            cache_read_tokens, cache_creation_tokens, duration_ms,
            app_version, terminal_type, response_content,
            source, aws_request_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'claude_code',NULL)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`,
         [
           common.ts,
           common.session_id,
@@ -105,21 +134,23 @@ function insertEvent(db, eventName, ts, a) {
           common.user_email,
           common.user_id,
           common.org_id,
-          a["gen_ai.request.model"] || a["model"] || null,
-          toNum(a["cost_usd"] || a["claude_code.cost.usage"]),
-          toInt(a["gen_ai.usage.input_tokens"] ?? a["input_tokens"] ?? a["llm.usage.prompt_tokens"] ?? a["gen_ai.usage.prompt_tokens"]),
-          toInt(a["gen_ai.usage.output_tokens"] ?? a["output_tokens"] ?? a["llm.usage.completion_tokens"] ?? a["gen_ai.usage.completion_tokens"]),
-          toInt(a["cache_read_input_tokens"] ?? a["gen_ai.usage.cache_read_input_tokens"]),
-          toInt(a["cache_creation_input_tokens"] ?? a["gen_ai.usage.cache_creation_input_tokens"]),
-          toInt(a["duration_ms"]),
+          model,
+          cost,
+          inputTokens,
+          outputTokens,
+          cacheReadTokens,
+          cacheCreationTokens,
+          durationMs,
           a["app.version"] || null,
           a["terminal.type"] || null,
           a["response.content"] || a["gen_ai.response.content"] || null,
+          source,
         ]
       );
       return 1;
+    }
 
-    case "claude_code.tool_result":
+    case "tool_result":
       db.run(
         `INSERT INTO tool_uses
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
@@ -140,7 +171,7 @@ function insertEvent(db, eventName, ts, a) {
       );
       return 1;
 
-    case "claude_code.user_prompt":
+    case "user_prompt":
       db.run(
         `INSERT INTO user_prompts
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
@@ -159,7 +190,7 @@ function insertEvent(db, eventName, ts, a) {
       );
       return 1;
 
-    case "claude_code.api_error":
+    case "api_error":
       db.run(
         `INSERT INTO api_errors
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
@@ -179,7 +210,7 @@ function insertEvent(db, eventName, ts, a) {
       );
       return 1;
 
-    case "claude_code.tool_decision":
+    case "tool_decision":
       db.run(
         `INSERT INTO tool_decisions
           (timestamp, session_id, prompt_id, user_email, user_id, org_id,
