@@ -597,13 +597,13 @@
         <thead>
           <tr>
             <th data-tip="User email address">User</th>
-            <th data-tip="Subscription tier (Standard or Premium) from org member import">Tier</th>
+            <th data-tip="Standard/Premium = seat subscription. Enterprise = contributes to the pooled commitment.">Tier</th>
             <th data-tip="Total API requests made in the selected window">Requests</th>
             <th data-tip="Total input + output tokens consumed">Tokens</th>
             <th data-tip="Model that consumed the most tokens for this user in the selected window">Top Model</th>
-            <th data-tip="What this token usage would cost at pay-per-token API rates">Token Value</th>
-            <th data-tip="Prorated subscription cost for the selected window. If token usage exceeded the prorated plan cost, overage is shown separately in red.">Cost</th>
-            <th data-tip="Token Value ÷ prorated plan cost. &gt;1× means the subscription is cheaper than pay-per-token.">Value Ratio</th>
+            <th data-tip="What this token usage would cost at pay-per-token API list rates">Token Value</th>
+            <th data-tip="Seat users: prorated base price + (list value above included cap) × overage rate. Enterprise users: effective $ contributed to the commitment pool (list × (1 − discount)).">Cost</th>
+            <th data-tip="Seat users: Token Value ÷ what you actually paid (base + overage). &gt;1× = you're extracting more API value than the subscription costs. Enterprise users: % of the total commitment consumed by this user.">Value Ratio</th>
             <th data-tip="Number of active 5-hour usage sessions in the selected window">Windows</th>
             <th data-tip="Token Value ÷ total active hours — how much API value is generated per hour of use">Velocity</th>
           </tr>
@@ -870,12 +870,45 @@
       const s5 = sessionWindows?.summary || {};
       const s7 = weeklyWindows?.summary || {};
       const bp = billing?.billing_period;
+      const commit = billing?.commitment;
 
       const periodInfo = bp
         ? `${bp.daysElapsed}d elapsed / ${bp.daysRemaining}d remaining`
         : '';
 
+      let commitTile = '';
+      if (commit) {
+        const pct = Math.min(100, Math.max(0, commit.pct_consumed || 0));
+        const pace = commit.pace_delta || 0;
+        let paceLabel, paceColor;
+        if (Math.abs(pace) < 0.01 * (commit.amount_usd || 1)) {
+          paceLabel = 'on pace';
+          paceColor = 'var(--cyan)';
+        } else if (pace > 0) {
+          paceLabel = `${fmtCost(pace)} ahead of pace`;
+          paceColor = 'var(--red)';
+        } else {
+          paceLabel = `${fmtCost(-pace)} behind pace`;
+          paceColor = 'var(--orange)';
+        }
+        const barColor = pct >= 100 ? 'var(--red)' : pct >= 90 ? 'var(--orange)' : 'var(--green)';
+        const discountNote = commit.discount_pct > 0
+          ? ` (${commit.discount_pct}% off list)`
+          : '';
+        commitTile = `
+        <div class="plan-kpi">
+          <div class="label">Enterprise Commitment${discountNote}</div>
+          <div class="value" style="color:${barColor}">${fmtCost(commit.consumed)} <span style="font-size:14px;font-weight:500;color:var(--text-dim)">/ ${fmtCost(commit.amount_usd)}</span></div>
+          <div style="margin:6px 0;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${barColor}"></div>
+          </div>
+          <div class="sub">${pct.toFixed(1)}% consumed | ${commit.days_remaining}d remaining</div>
+          <div class="sub" style="color:${paceColor}">${paceLabel}</div>
+        </div>`;
+      }
+
       el.innerHTML = `<div class="plan-overview">
+        ${commitTile}
         <div class="plan-kpi">
           <div class="label">Billing Period</div>
           <div class="value" style="color:var(--green)">${fmtTokens(billing?.total_tokens || 0)} <span style="font-size:14px;font-weight:500;color:var(--text-dim)">(${fmtCost(billing?.total_api_equivalent_cost)})</span></div>
@@ -1051,14 +1084,20 @@
         }
       }
 
-      // Build per-user billing info (seat tier)
+      // Build per-user billing info (seat tier + billing model)
       const billingByUser = {};
       if (billing?.by_user) {
         for (const bu of billing.by_user) {
           billingByUser[bu.user_email] = bu;
         }
       }
-      const seatCosts = billing?.seat_costs || { standard: 20, premium: 100 };
+      const seatCosts = billing?.seat_costs || {
+        standard: 20, premium: 100,
+        standard_included: 20, premium_included: 100,
+        standard_overage_pct: 0, premium_overage_pct: 0,
+      };
+      const commit = billing?.commitment;
+      const discountFactor = commit ? 1 - (commit.discount_pct || 0) / 100 : 1;
 
       // Compute number of days in the selected filter window
       const fromVal = document.getElementById('filterFrom').value;
@@ -1078,35 +1117,66 @@
         const userTokens = (u.input_tokens || 0) + (u.output_tokens || 0)
                          + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
 
-        // Seat tier
+        // Seat tier + billing model
         const bu = billingByUser[u.user_email];
         const tier = bu?.seat_tier || 'Standard';
-        const planCostPerMonth = tier.toLowerCase() === 'premium' ? seatCosts.premium : seatCosts.standard;
+        const billingModel = (bu?.billing_model || 'seat').toLowerCase();
+        const isEnterprise = billingModel === 'enterprise';
 
-        // Token value: api-equivalent cost for the selected window (from by-user query)
+        // Tier label: enterprise users override the seat tier display
+        const tierLabel = isEnterprise ? 'Enterprise' : tier;
+        const tierColor = isEnterprise ? 'var(--green)'
+          : (tier.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)');
+
+        // Token value: api-equivalent (list-price) cost for the selected window
         const tokenValue = u.cost || 0;
 
-        // Cost column: prorated subscription for the window + overage if usage exceeded it
-        const proratedPlan = planCostPerMonth * windowDays / 30;
-        const overage = Math.max(0, tokenValue - proratedPlan);
-        const totalCost = proratedPlan + overage;
-        let costCell;
-        if (overage > 0) {
-          costCell = `<span style="color:var(--cyan)">${fmtCost(proratedPlan)}</span>`
-            + ` <span style="color:var(--red);font-size:11px">+${fmtCost(overage)}</span>`;
-        } else {
-          costCell = `<span style="color:var(--cyan)">${fmtCost(totalCost)}</span>`;
-        }
+        let costCell, ratioColor = 'var(--text-dim)', ratioLabel = '—';
 
-        // Value ratio: token value / prorated plan cost
-        const ratio = proratedPlan > 0 ? tokenValue / proratedPlan : null;
-        let ratioColor = 'var(--text-dim)';
-        let ratioLabel = '—';
-        if (ratio != null) {
-          ratioLabel = ratio.toFixed(1) + 'x';
-          if (ratio >= 2) ratioColor = 'var(--green)';
-          else if (ratio >= 1) ratioColor = 'var(--cyan)';
-          else ratioColor = 'var(--red)';
+        if (isEnterprise) {
+          // Enterprise users: cost = effective $ contributing to the commitment pool
+          // (list × (1 - discount)). Ratio cell shows % of total commitment.
+          const effective = tokenValue * discountFactor;
+          costCell = `<span style="color:var(--green)">${fmtCost(effective)}</span>`;
+          if (commit?.discount_pct > 0) {
+            costCell += ` <span style="color:var(--text-dim);font-size:11px">@ ${(100 - commit.discount_pct).toFixed(0)}% list</span>`;
+          }
+          if (commit?.amount_usd > 0) {
+            const pct = (effective / commit.amount_usd) * 100;
+            ratioLabel = pct.toFixed(1) + '%';
+            ratioColor = pct >= 25 ? 'var(--orange)' : pct >= 10 ? 'var(--cyan)' : 'var(--text-dim)';
+          }
+        } else {
+          // Seat users: cost = prorated base + (list above prorated included) × overage_pct.
+          // overage_pct = 0 → rate-limited plan, base price is final.
+          // overage_pct = 100 → full list spillover above the cap.
+          const isPremium = tier.toLowerCase() === 'premium';
+          const baseMonthly = isPremium ? seatCosts.premium : seatCosts.standard;
+          const includedMonthly = isPremium ? seatCosts.premium_included : seatCosts.standard_included;
+          const overagePct = isPremium ? seatCosts.premium_overage_pct : seatCosts.standard_overage_pct;
+
+          const proratedBase = baseMonthly * windowDays / 30;
+          const proratedIncluded = includedMonthly * windowDays / 30;
+          const overage = Math.max(0, tokenValue - proratedIncluded) * (overagePct / 100);
+          const effectiveCost = proratedBase + overage;
+
+          if (overage > 0) {
+            costCell = `<span style="color:var(--cyan)">${fmtCost(proratedBase)}</span>`
+              + ` <span style="color:var(--red);font-size:11px">+${fmtCost(overage)}</span>`;
+          } else {
+            costCell = `<span style="color:var(--cyan)">${fmtCost(proratedBase)}</span>`;
+          }
+
+          // Value ratio: list value ÷ what you actually paid (base + overage).
+          // For rate-limited plans this is the same as list/base (extracted value);
+          // for spillover plans it converges to 1× as you burn through overage.
+          const ratio = effectiveCost > 0 ? tokenValue / effectiveCost : null;
+          if (ratio != null) {
+            ratioLabel = ratio.toFixed(1) + 'x';
+            if (ratio >= 2) ratioColor = 'var(--green)';
+            else if (ratio >= 1) ratioColor = 'var(--cyan)';
+            else ratioColor = 'var(--red)';
+          }
         }
 
         // Top model cell
@@ -1117,7 +1187,7 @@
 
         return `<tr>
           <td>${u.user_email || '—'}</td>
-          <td><span style="color:${tier.toLowerCase() === 'premium' ? 'var(--accent2)' : 'var(--text-dim)'}">${tier}</span></td>
+          <td><span style="color:${tierColor}">${tierLabel}</span></td>
           <td>${fmt(u.requests)}</td>
           <td>${fmtTokens(userTokens)}</td>
           <td>${topModelCell}</td>
