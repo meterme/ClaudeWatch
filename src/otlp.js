@@ -40,7 +40,9 @@ async function ingestOtlpLogs(payload) {
           rec.observedTimeUnixNano || rec.observed_time_unix_nano
         );
 
-        if (eventName === "claude_code.api_request" || eventName === "api_request") {
+        // Opt-in diagnostic for mapping a new client's attribute schema (e.g.
+        // OpenCode). Off by default — set OTLP_DEBUG=1 to enable.
+        if (process.env.OTLP_DEBUG && (eventName === "claude_code.api_request" || eventName === "api_request")) {
           console.log("[otlp-debug]", attrs["service.name"], "api_request — user.email:",
             attrs["user.email"] ?? "(none)", "| keys:", JSON.stringify(Object.keys(attrs)));
         }
