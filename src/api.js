@@ -29,6 +29,9 @@ router.get("/stats/summary", async (req, res) => {
   const { from, to, source } = req.query;
   const audience = await parseAudience(db, req);
   const wc = whereClause(from, to, audience, source);
+  // user_prompts / api_errors have no `source` column, so reuse a source-less
+  // clause for them — applying the source filter there throws "no such column".
+  const wcNoSrc = whereClause(from, to, audience, null, "user_prompts");
 
   const totalCost = scalar(db,
     `SELECT COALESCE(SUM(cost_usd), 0) AS v FROM api_requests ${wc.sql}`, wc.params);
@@ -39,9 +42,9 @@ router.get("/stats/summary", async (req, res) => {
   const totalTokensOut = scalar(db,
     `SELECT COALESCE(SUM(output_tokens), 0) AS v FROM api_requests ${wc.sql}`, wc.params);
   const totalPrompts = scalar(db,
-    `SELECT COUNT(*) AS v FROM user_prompts ${wc.sql}`, wc.params);
+    `SELECT COUNT(*) AS v FROM user_prompts ${wcNoSrc.sql}`, wcNoSrc.params);
   const totalErrors = scalar(db,
-    `SELECT COUNT(*) AS v FROM api_errors ${wc.sql}`, wc.params);
+    `SELECT COUNT(*) AS v FROM api_errors ${wcNoSrc.sql}`, wcNoSrc.params);
   const uniqueUsers = scalar(db,
     `SELECT COUNT(DISTINCT user_email) AS v FROM api_requests ${wc.sql}`, wc.params);
   const uniqueSessions = scalar(db,
@@ -110,9 +113,12 @@ router.get("/stats/by-user", async (req, res) => {
      GROUP BY user_email
      ORDER BY cost DESC`, wc.params);
 
-  // Determine top model per user (most tokens in the same window, including cache)
+  // Per-user, per-model breakdown — drives both the "top model" column and the
+  // expandable per-model sub-rows in the Usage by user table.
   const modelRows = query(db,
     `SELECT user_email, model,
+            COUNT(*) AS requests,
+            SUM(cost_usd) AS cost,
             SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)
                 + COALESCE(cache_read_tokens,0) + COALESCE(cache_creation_tokens,0)) AS total_tokens
      FROM api_requests ${wc.sql}
@@ -120,15 +126,24 @@ router.get("/stats/by-user", async (req, res) => {
      ORDER BY user_email, total_tokens DESC`, wc.params);
 
   const topModelByUser = {};
+  const modelsByUser = {};
   for (const r of modelRows) {
     if (!topModelByUser[r.user_email]) {
       topModelByUser[r.user_email] = { model: r.model, tokens: r.total_tokens };
     }
+    if (!modelsByUser[r.user_email]) modelsByUser[r.user_email] = [];
+    modelsByUser[r.user_email].push({
+      model: r.model,
+      requests: r.requests,
+      cost: r.cost,
+      total_tokens: r.total_tokens,
+    });
   }
   for (const r of rows) {
     const tm = topModelByUser[r.user_email];
     r.top_model = tm?.model || null;
     r.top_model_tokens = tm?.tokens || 0;
+    r.models = modelsByUser[r.user_email] || [];
   }
 
   await maskRows(rows);
@@ -224,7 +239,8 @@ router.get("/sessions", async (req, res) => {
             COUNT(*) AS requests,
             SUM(cost_usd) AS cost,
             SUM(input_tokens) AS input_tokens,
-            SUM(output_tokens) AS output_tokens
+            SUM(output_tokens) AS output_tokens,
+            GROUP_CONCAT(DISTINCT model) AS models
      FROM api_requests ${wc.sql}
      GROUP BY session_id
      ORDER BY started DESC

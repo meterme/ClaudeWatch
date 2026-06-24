@@ -1,6 +1,6 @@
 # Claude Usage Monitor
 
-A lightweight Node.js server that receives [Claude Code OpenTelemetry events](https://docs.claude.com/en/docs/claude-code/monitoring-usage), stores them in SQLite, and serves a real-time dashboard for auditing team usage patterns.
+A lightweight Node.js server that receives [Claude Code OpenTelemetry events](https://docs.claude.com/en/docs/claude-code/monitoring-usage) — and usage from other OTLP clients such as [OpenCode](#connecting-opencode) — stores them in SQLite, and serves a real-time dashboard for auditing team usage patterns.
 
 ## Quick Start
 
@@ -79,6 +79,35 @@ Or in managed settings:
 
 The server compares tokens in constant time and returns 401 on mismatch. Leaving `INGEST_TOKEN` unset preserves the open-ingest behavior.
 
+## Connecting OpenCode
+
+[OpenCode](https://opencode.ai) can report usage to the same `/v1/logs` receiver via the community [`@devtheops/opencode-plugin-otel`](https://github.com/DEVtheOPS/opencode-plugin-otel) plugin, which emits per-request **cost, tokens, and model** as OTLP events. (OpenCode's built-in `experimental.openTelemetry` only emits operational logs with no usage data — this plugin is what provides the cost/token signal.)
+
+1. Add the plugin to `~/.config/opencode/opencode.json`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@devtheops/opencode-plugin-otel"]
+}
+```
+
+2. Point it at this server. The plugin uses its **own** `OPENCODE_*` env vars — note that you must set **HTTP/JSON on port 3456**, because the plugin defaults to gRPC on `:4317`, which this server does not accept:
+
+```bash
+export OPENCODE_ENABLE_TELEMETRY=1
+export OPENCODE_OTLP_ENDPOINT="http://your-server:3456"   # not the default :4317
+export OPENCODE_OTLP_PROTOCOL="http/json"                 # this server has no gRPC listener
+```
+
+OpenCode events arrive with the resource attribute `service.name=opencode`; the server attributes them with `source=opencode` and they appear in the dashboard alongside Claude Code (use the **Source** filter to isolate them). Cost/tokens/model come straight from the plugin (e.g. `deepseek/deepseek-v4-pro` via OpenRouter) — the server stores exactly what the plugin reports rather than recomputing it.
+
+**Notes:**
+
+- **Silence the noise:** disable OpenCode's built-in `experimental.openTelemetry` if enabled. It emits chatty operational logs (`loop`, `stream`, `tracking`, …) with no usage data, which this server ignores (they aren't stored).
+- **User attribution:** OpenCode events don't carry a user email, so they're attributed by session rather than person. You can try tagging them with `OPENCODE_RESOURCE_ATTRIBUTES="user.email=you@example.com"` (or the standard `OTEL_RESOURCE_ATTRIBUTES`), but whether the attribute is propagated onto log records depends on the plugin/version.
+- **Shared ingest token:** if you set `INGEST_TOKEN` on the server, send it from the plugin via `OPENCODE_OTLP_HEADERS="Authorization=Bearer <token>"`.
+
 ## Architecture
 
 ```
@@ -106,6 +135,8 @@ Claude Code instances
 | `claude_code.user_prompt` | `user_prompts` | prompt length |
 | `claude_code.api_error` | `api_errors` | status code, retries |
 | `claude_code.tool_decision` | `tool_decisions` | tool, accept/reject |
+
+Event names are matched after stripping the `claude_code.` prefix, so other OTLP clients that emit the bare names (`api_request`, `user_prompt`, `api_error`, …) — such as the OpenCode plugin above — are mapped to the same tables and attributed via `service.name`.
 
 ## API Endpoints
 
@@ -147,3 +178,4 @@ All configuration is via environment variables. None are required — the server
 | `AUTH_USER` | `admin` | Username for the **initial** admin account. Only read on first run when no `dashboard_users` rows exist; ignored on subsequent boots. Manage users from the admin UI after that. |
 | `AUTH_PASS` | random | Password for the **initial** admin account. Only read on first run. If unset, a random password is generated and printed to stdout — capture it from the logs or set this explicitly. |
 | `OBSCURE_USERS` | `0` | Set to `1` to mask user emails behind stable `USER-N` tokens (`USER-1`, `USER-2`, …) in the dashboard. Real emails remain in the database; aliases are persistent and survive toggling the flag. On startup any users without an alias are assigned one; new users seen during ingest are assigned on the fly. |
+| `OTLP_DEBUG` | `0` | Set to `1` to log each `api_request` event's `service.name`, `user.email`, and attribute keys on ingest. Diagnostic aid for mapping a new OTLP client's attribute schema (e.g. onboarding another agent); leave unset in normal operation. |
